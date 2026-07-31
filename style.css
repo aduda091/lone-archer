@@ -222,7 +222,9 @@ kbd {
 .upg-desc { font-size: 12.5px; color: var(--muted); line-height: 1.35; min-height: 34px; }
 .upg-stat { font-size: 12.5px; }
 .upg-stat b { color: var(--accent); }
+.upg-actions { display: flex; gap: 8px; }
 .upg-buy {
+  flex: 1;
   cursor: pointer; border: none; border-radius: 9px;
   padding: 9px; font-weight: 800; font-size: 14px;
   color: #1a1206;
@@ -231,6 +233,17 @@ kbd {
 }
 .upg-buy:disabled { cursor: not-allowed; filter: grayscale(0.75) brightness(0.68); }
 .upg-buy.maxed { background: rgba(255,255,255,0.1); color: var(--muted); cursor: default; }
+.upg-sell {
+  cursor: pointer; border-radius: 9px;
+  padding: 9px 12px; font-weight: 800; font-size: 13px;
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--panel-border);
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  white-space: nowrap;
+}
+.upg-sell:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.upg-sell:disabled { opacity: 0.38; cursor: not-allowed; }
 
 .upgrade-foot { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
 .upgrade-foot .chk { margin-right: auto; color: var(--muted); }

@@ -105,6 +105,12 @@
       desc: "Fire extra arrows in a spread each shot.",
     },
     {
+      id: "focus", name: "Focused Volley", ico: "🔭", max: 7,
+      base: 0, step: 0.12, baseCost: 90, costMul: 1.5,
+      fmt: (v) => `${Math.round(v * 100)}% tighter`,
+      desc: "Narrows the multi-shot spread so arrows stay grouped at long range.",
+    },
+    {
       id: "pierce", name: "Piercing", ico: "🗡️", max: 8,
       base: 0, step: 1, baseCost: 90, costMul: 1.7,
       fmt: (v) => `${v} enem${v === 1 ? "y" : "ies"}`,
@@ -158,6 +164,7 @@
   const GRAVITY = 900;          // px/s² applied to spent arrows
   const INTEREST_PERIOD = 5;    // seconds between interest payouts
   const CHILL_DURATION = 2;     // seconds an enemy stays chilled after a hit
+  const REFUND_RATE = 0.75;     // fraction of a level's cost returned when sold
 
   function upgValue(u, lvl) { return u.base + u.step * lvl; }
   function upgCost(u, lvl) { return Math.round(u.baseCost * Math.pow(u.costMul, lvl)); }
@@ -219,6 +226,7 @@
     hurt() { this.blip(90, 0.22, "sawtooth", 0.09); },
     wave() { this.blip(440, 0.12, "sine", 0.06); setTimeout(() => this.blip(660, 0.14, "sine", 0.06), 110); },
     buy() { this.blip(700, 0.08, "sine", 0.06); setTimeout(() => this.blip(950, 0.09, "sine", 0.06), 70); },
+    sell() { this.blip(520, 0.08, "sine", 0.05); setTimeout(() => this.blip(360, 0.09, "sine", 0.05), 60); },
   };
 
   // ---------- enemy archetypes ----------
@@ -329,7 +337,8 @@
     const dmg = stat("damage");
     const range = stat("range");
     const shots = Math.round(stat("multishot"));
-    const spread = 0.12; // radians between multishot arrows
+    // angular gap between adjacent arrows, tightened by the Focused Volley upgrade
+    const spread = 0.12 * (1 - stat("focus"));
     const start = -(shots - 1) / 2;
     for (let i = 0; i < shots; i++) {
       const a = ang + (start + i) * spread;
@@ -933,6 +942,14 @@
         btn.innerHTML = `🪙 ${cost}`;
         btn.disabled = state.gold < cost;
       }
+      const sell = card.querySelector(".upg-sell");
+      if (lvl <= 0) {
+        sell.textContent = "Sell";
+        sell.disabled = true;
+      } else {
+        sell.disabled = false;
+        sell.innerHTML = `↩ ${Math.floor(upgCost(u, lvl - 1) * REFUND_RATE)}`;
+      }
     });
   }
 
@@ -950,8 +967,12 @@
         </div>
         <div class="upg-desc">${u.desc}</div>
         <div class="upg-stat"></div>
-        <button class="upg-buy"></button>`;
+        <div class="upg-actions">
+          <button class="upg-buy"></button>
+          <button class="upg-sell" title="Sell one level for a ${Math.round(REFUND_RATE * 100)}% refund"></button>
+        </div>`;
       card.querySelector(".upg-buy").addEventListener("click", () => buyUpgrade(u.id));
+      card.querySelector(".upg-sell").addEventListener("click", () => sellUpgrade(u.id));
       ui.el.upList.appendChild(card);
     });
   }
@@ -972,6 +993,28 @@
       state.wallHp = Math.min(newMax, state.wallHp + gained); // heal by the gained amount
     }
     sound.buy();
+    ui.setWall();
+    ui.setGold();
+    refreshUpgradeList();
+  }
+
+  function sellUpgrade(id) {
+    const u = UPGRADES.find(x => x.id === id);
+    const lvl = state.levels[id] || 0;
+    if (lvl <= 0) return;
+    const refund = Math.floor(upgCost(u, lvl - 1) * REFUND_RATE);
+    // wall HP mirrors the buy-time heal so selling can't be abused to heal cheaply
+    if (id === "wallHp") {
+      const oldMax = state.wallMax;
+      state.levels[id] = lvl - 1;
+      const newMax = stat("wallHp");
+      state.wallMax = newMax;
+      state.wallHp = Math.max(1, Math.min(newMax, state.wallHp - (oldMax - newMax)));
+    } else {
+      state.levels[id] = lvl - 1;
+    }
+    state.gold += refund;
+    sound.sell();
     ui.setWall();
     ui.setGold();
     refreshUpgradeList();
