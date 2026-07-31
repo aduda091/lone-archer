@@ -195,6 +195,7 @@
     aim: { x: 0, y: 0 },
     fireCooldown: 0,
     interestTimer: INTEREST_PERIOD,   // countdown to next interest payout
+    dayPhase: 0,         // 0 = midnight at wave start, 1 = dawn as it clears
   };
 
   const MINIBOSS_EVERY = 5;   // endless: a mini-boss appears on every Nth wave
@@ -322,6 +323,7 @@
     state.waveTotal = state.spawnQueue.length;
     state.spawnTimer = 0;
     state.betweenWaves = 0;
+    state.dayPhase = 0;   // reset the sky to midnight for the new wave
     ui.setWave(n);
     ui.setProgress();
     if (state.mode === "levels" && n === 10) banner("FINAL WAVE", "10 / 10 — the Warlord");
@@ -491,6 +493,9 @@
       onWaveCleared();
     }
     ui.setProgress();
+    // ease the day/night phase toward the current wave progress
+    const dayTarget = ui.waveFraction();
+    state.dayPhase += (dayTarget - state.dayPhase) * Math.min(1, dt * 1.8);
 
     tryFire(dt);
 
@@ -611,44 +616,97 @@
     ctx.restore();
   }
 
+  // ---- day/night helpers ----
+  function hexToRgb(h) {
+    h = h.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function lerpColor(a, b, t) {
+    const A = hexToRgb(a), B = hexToRgb(b);
+    return `rgb(${Math.round(A[0] + (B[0] - A[0]) * t)},${Math.round(A[1] + (B[1] - A[1]) * t)},${Math.round(A[2] + (B[2] - A[2]) * t)})`;
+  }
+  // fixed star field in normalized coords (upper part of the sky)
+  const STARS = Array.from({ length: 68 }, () => ({
+    x: Math.random(), y: Math.random() * 0.62, r: Math.random() * 1.3 + 0.3, tw: Math.random() * Math.PI * 2,
+  }));
+
   function drawBackground() {
-    // sky
-    const sky = ctx.createLinearGradient(0, 0, 0, world.groundY);
-    sky.addColorStop(0, "#0b1226");
-    sky.addColorStop(0.6, "#182247");
-    sky.addColorStop(1, "#28345f");
+    const p = Math.max(0, Math.min(1, state.dayPhase)); // 0 midnight -> 1 dawn
+    const gy = world.groundY;
+
+    // sky gradient, interpolated from a midnight to a dawn palette
+    const sky = ctx.createLinearGradient(0, 0, 0, gy);
+    sky.addColorStop(0.0, lerpColor("#05070f", "#1a2444", p));  // zenith
+    sky.addColorStop(0.55, lerpColor("#0b1226", "#544a86", p)); // mid sky
+    sky.addColorStop(1.0, lerpColor("#182247", "#ffb066", p));  // horizon glow
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, world.groundY + 2);
+    ctx.fillRect(0, 0, W, gy + 2);
 
-    // distant moon
+    // stars twinkle at night, fade out toward dawn
+    const starA = Math.max(0, 1 - p * 1.6);
+    if (starA > 0.01) {
+      ctx.save();
+      ctx.fillStyle = "#eaf0ff";
+      for (const s of STARS) {
+        const tw = 0.6 + 0.4 * Math.sin(state.time * 2 + s.tw);
+        ctx.globalAlpha = starA * tw * 0.9;
+        ctx.beginPath(); ctx.arc(s.x * W, s.y * gy, s.r, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // moon: high at midnight, sinks and fades as dawn approaches
+    const moonA = Math.max(0, 1 - p * 1.5);
+    if (moonA > 0.01) {
+      const mx = W * 0.22, my = gy * (0.26 + p * 0.5);
+      ctx.save();
+      ctx.globalAlpha = moonA;
+      ctx.fillStyle = "#e9eeff";
+      ctx.beginPath(); ctx.arc(mx, my, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = lerpColor("#0b1226", "#544a86", p);   // carve a crescent
+      ctx.beginPath(); ctx.arc(mx + 13, my - 8, 30, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    // sun: rises from the horizon toward dawn
+    const sunUp = (p - 0.35) / 0.65;   // 0 below horizon -> 1 fully risen
+    if (sunUp > 0.01) {
+      const sx = W * 0.5, sy = gy - sunUp * gy * 0.42;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, sunUp * 1.4);
+      const glow = ctx.createRadialGradient(sx, sy, 6, sx, sy, 150);
+      glow.addColorStop(0, "rgba(255,214,140,0.85)");
+      glow.addColorStop(1, "rgba(255,150,80,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(sx, sy, 150, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#ffd884";
+      ctx.beginPath(); ctx.arc(sx, sy, 40, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    // far hills silhouette (drawn over the sun so it appears to rise behind them)
     ctx.save();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = "#e9eeff";
-    ctx.beginPath(); ctx.arc(W * 0.2, H * 0.22, 34, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#182247";
-    ctx.beginPath(); ctx.arc(W * 0.2 + 14, H * 0.22 - 8, 32, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-
-    // far hills silhouette
-    ctx.fillStyle = "rgba(10,15,32,0.6)";
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = lerpColor("#0a0f20", "#241a33", p);
     ctx.beginPath();
-    ctx.moveTo(0, world.groundY);
-    const hbase = world.groundY - 40;
+    ctx.moveTo(0, gy);
+    const hbase = gy - 40;
     for (let x = 0; x <= W; x += 60) {
       ctx.lineTo(x, hbase - Math.sin(x * 0.01) * 26 - 18);
     }
-    ctx.lineTo(W, world.groundY); ctx.closePath(); ctx.fill();
+    ctx.lineTo(W, gy); ctx.closePath(); ctx.fill();
+    ctx.restore();
 
-    // ground
-    const gr = ctx.createLinearGradient(0, world.groundY, 0, H);
-    gr.addColorStop(0, "#2a2416");
-    gr.addColorStop(1, "#15110a");
+    // ground, warming slightly at dawn
+    const gr = ctx.createLinearGradient(0, gy, 0, H);
+    gr.addColorStop(0, lerpColor("#2a2416", "#3a2c1a", p));
+    gr.addColorStop(1, lerpColor("#15110a", "#1b130b", p));
     ctx.fillStyle = gr;
-    ctx.fillRect(0, world.groundY, W, H - world.groundY);
+    ctx.fillRect(0, gy, W, H - gy);
     // ground top line
-    ctx.strokeStyle = "rgba(255,220,150,0.15)";
+    ctx.strokeStyle = `rgba(255,220,150,${0.15 + p * 0.15})`;
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, world.groundY); ctx.lineTo(W, world.groundY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
   }
 
   function drawWall() {
@@ -918,28 +976,17 @@
       const remaining = state.spawnQueue.length + enemies.length;
       return Math.max(0, Math.min(1, 1 - remaining / state.waveTotal));
     },
+    // the bar tracks how far through the CURRENT wave the player is
     setProgress() {
-      let frac, label, boss;
-      if (state.mode === "levels") {
-        // overall campaign progress: completed waves + progress through this one
-        const done = Math.max(0, state.wave - 1) + this.waveFraction();
-        frac = Math.min(1, done / 10);
-        label = `Campaign · ${Math.min(10, Math.max(1, state.wave))} / 10`;
-        boss = state.wave >= 10;
-      } else {
-        // endless: progress toward the next mini-boss (every MINIBOSS_EVERY waves)
-        const w = Math.max(1, state.wave);
-        const into = ((w - 1) % MINIBOSS_EVERY) + this.waveFraction();
-        frac = Math.min(1, into / MINIBOSS_EVERY);
-        if (w % MINIBOSS_EVERY === 0) { label = "Mini-boss wave!"; boss = true; }
-        else {
-          const togo = MINIBOSS_EVERY - (w % MINIBOSS_EVERY);
-          label = `Mini-boss in ${togo} wave${togo === 1 ? "" : "s"}`;
-          boss = false;
-        }
-      }
+      const frac = this.waveFraction();
+      const remaining = state.spawnQueue.length + enemies.length;
+      const special = (state.mode === "levels" && state.wave >= 10) || isMiniBossWave(state.wave);
+      let label;
+      if (state.wave < 1) label = "Get ready…";
+      else if (state.betweenWaves > 0 && remaining === 0) label = "Wave cleared — next incoming";
+      else label = `${remaining} foe${remaining === 1 ? "" : "s"} left` + (special ? " · Boss" : "");
       this.el.progressFill.style.width = (frac * 100) + "%";
-      this.el.progressFill.classList.toggle("boss", !!boss);
+      this.el.progressFill.classList.toggle("boss", special);
       this.el.progressLabel.textContent = label;
     },
     setAutofire() {
@@ -1109,6 +1156,7 @@
     state.fireCooldown = 0;
     state.interestTimer = INTEREST_PERIOD;
     state.waveTotal = 0;
+    state.dayPhase = 0;
     // default aim points left toward the incoming horde until the cursor moves
     state.aim.x = world.ballista.x - 320;
     state.aim.y = world.ballista.y;
