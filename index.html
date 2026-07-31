@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Lone Archer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-root">
+    <canvas id="game"></canvas>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div class="hud-left">
+        <div class="hud-pill" title="Castle wall integrity">
+          <span class="ico">🏰</span>
+          <div class="wall-bar"><div id="wall-fill"></div><span id="wall-text">100 / 100</span></div>
+        </div>
+      </div>
+      <div class="hud-center">
+        <div class="hud-pill" id="wave-pill"><span class="ico">⚔️</span><span id="wave-text">Wave 1</span></div>
+        <div class="hud-pill" id="mode-pill"><span id="mode-text">Endless</span></div>
+      </div>
+      <div class="hud-right">
+        <div class="hud-pill gold" title="Gold"><span class="ico">🪙</span><span id="gold-text">0</span></div>
+        <button id="btn-upgrade" class="btn btn-small">⚙ Upgrades <kbd>U</kbd></button>
+      </div>
+    </div>
+
+    <!-- Wave banner -->
+    <div id="wave-banner" class="hidden"></div>
+
+    <!-- Start menu -->
+    <div id="menu" class="overlay">
+      <div class="panel menu-panel">
+        <h1 class="title">LONE<span>ARCHER</span></h1>
+        <p class="subtitle">Hold the line. One ballista against the horde.</p>
+
+        <div class="mode-select">
+          <button class="mode-card" data-mode="endless">
+            <div class="mode-emoji">♾️</div>
+            <div class="mode-name">Endless</div>
+            <div class="mode-desc">Survive escalating waves for as long as you can. Chase your best.</div>
+          </button>
+          <button class="mode-card" data-mode="levels">
+            <div class="mode-emoji">🗺️</div>
+            <div class="mode-name">Campaign</div>
+            <div class="mode-desc">10 hand-tuned waves ending in a boss. Clear them all to win.</div>
+          </button>
+        </div>
+
+        <div class="menu-foot">
+          <div class="best">Best: <span id="best-text">Wave 0</span></div>
+          <label class="chk"><input type="checkbox" id="sound-toggle" checked /> Sound</label>
+        </div>
+        <p class="hint">Hold <b>mouse / finger</b> to shoot toward the cursor · <b>U</b> to upgrade · <b>P</b> to pause</p>
+      </div>
+    </div>
+
+    <!-- Upgrade / pause modal -->
+    <div id="upgrade-modal" class="overlay hidden">
+      <div class="panel upgrade-panel">
+        <div class="upgrade-head">
+          <h2>Upgrades <span class="paused-tag">PAUSED</span></h2>
+          <div class="gold-big"><span class="ico">🪙</span><span id="gold-big-text">0</span></div>
+        </div>
+        <div id="upgrade-list" class="upgrade-list"></div>
+        <div class="upgrade-foot">
+          <label class="chk"><input type="checkbox" id="sound-toggle-2" checked /> Sound</label>
+          <button id="btn-quit" class="btn btn-ghost">Quit to menu</button>
+          <button id="btn-resume" class="btn">Resume <kbd>U</kbd></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Game over / victory -->
+    <div id="end-modal" class="overlay hidden">
+      <div class="panel end-panel">
+        <h2 id="end-title">Defeated</h2>
+        <p id="end-sub"></p>
+        <div class="end-stats" id="end-stats"></div>
+        <div class="end-actions">
+          <button id="btn-retry" class="btn">Play again</button>
+          <button id="btn-menu" class="btn btn-ghost">Main menu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
