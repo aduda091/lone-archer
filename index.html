@@ -29,7 +29,14 @@
         </div>
       </div>
       <div class="hud-right">
-        <div class="hud-pill gold" title="Gold"><span class="ico">🪙</span><span id="gold-text">0</span></div>
+        <div class="hud-pill gold" title="Gold">
+          <svg class="coin" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="12" fill="#d99a2b"/>
+            <circle cx="12" cy="12" r="8.88" fill="#ffd95c"/>
+            <rect x="10.56" y="7.2" width="2.88" height="9.6" fill="#d99a2b"/>
+          </svg>
+          <span id="gold-text">0</span>
+        </div>
         <button id="btn-autofire" class="btn btn-small btn-toggle" title="Toggle auto-fire">🔥 Auto <kbd>F</kbd></button>
         <button id="btn-upgrade" class="btn btn-small">⚙ Upgrades <kbd>U</kbd></button>
       </div>
@@ -70,7 +77,14 @@
       <div class="panel upgrade-panel">
         <div class="upgrade-head">
           <h2>Upgrades <span class="paused-tag">PAUSED</span></h2>
-          <div class="gold-big"><span class="ico">🪙</span><span id="gold-big-text">0</span></div>
+          <div class="gold-big">
+            <svg class="coin" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="12" fill="#d99a2b"/>
+              <circle cx="12" cy="12" r="8.88" fill="#ffd95c"/>
+              <rect x="10.56" y="7.2" width="2.88" height="9.6" fill="#d99a2b"/>
+            </svg>
+            <span id="gold-big-text">0</span>
+          </div>
         </div>
         <div id="upgrade-list" class="upgrade-list"></div>
         <div class="upgrade-foot">

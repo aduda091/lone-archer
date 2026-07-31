@@ -15,12 +15,21 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* form controls don't inherit font-family by default — without this the emoji
+   on buttons (🔥 Auto, ⚙ Upgrades) fall back to a UI font with no colour glyphs */
+button, input, select, textarea { font-family: inherit; }
+
 html, body {
   height: 100%;
   overflow: hidden;
   background: #05070f;
   color: var(--text);
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* emoji families sit before the generic fallback — "Segoe UI" has no colour
+     glyphs, and a generic like sans-serif always resolves, so anything listed
+     after it would never be reached. Stick to long-established emoji here:
+     recent codepoints (🪙 is Emoji 12) are missing from older system fonts. */
+  font-family: "Segoe UI", system-ui, -apple-system,
+               "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -68,6 +77,15 @@ html, body {
 }
 .hud-pill .ico { font-size: 16px; }
 .hud-pill.gold { color: var(--gold); }
+
+/* Gold coin, drawn as SVG so it matches the coin rendered on the canvas and
+   never depends on a system font shipping a given emoji. Scales with its
+   surrounding text via em units. */
+.coin {
+  width: 1em; height: 1em;
+  flex: none;
+  vertical-align: -0.14em;
+}
 
 /* wave / campaign progress */
 .progress-card {
@@ -252,6 +270,19 @@ kbd {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   max-height: 56vh; overflow-y: auto; padding-right: 4px;
 }
+.upg-group {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 11px; font-weight: 800; letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.upg-group::after {
+  content: ""; flex: 1; height: 1px;
+  background: linear-gradient(90deg, var(--panel-border), transparent);
+}
+.upgrade-list > .upg-group:first-child { margin-top: 0; }
 .upg {
   display: flex; flex-direction: column; gap: 8px;
   background: rgba(255,255,255,0.04);

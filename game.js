@@ -17,6 +17,23 @@
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+  // Font stack for canvas text. Canvas does the same per-glyph fallback as CSS,
+  // so the emoji families have to sit before the generic or icons render as tofu.
+  const CANVAS_FONT = '"Segoe UI", system-ui, "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
+  // The gold coin as inline SVG, geometry matched to drawCoin() below so the DOM
+  // and the canvas show the same coin. Avoids depending on a system font shipping
+  // any particular emoji (🪙 is Emoji 12 and missing on older Windows builds).
+  const COIN_SVG =
+    '<svg class="coin" viewBox="0 0 24 24" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="12" fill="#d99a2b"/>' +
+    '<circle cx="12" cy="12" r="8.88" fill="#ffd95c"/>' +
+    '<rect x="10.56" y="7.2" width="2.88" height="9.6" fill="#d99a2b"/></svg>';
+
+  // Virtual pixels per in-world metre — only used to phrase stats for the player.
+  // The play field is ~53 m wide, so a bolt's reach reads like real archery range.
+  const PX_PER_M = 24;
+  const metres = (px) => px / PX_PER_M;
+
   // Pick a clamped logical size that fits the current window's aspect ratio.
   function computeVirtualDims() {
     const aspect = window.innerWidth / window.innerHeight;
@@ -72,85 +89,116 @@
   }
 
   // ---------- upgrade definitions ----------
-  // Each upgrade: base value, per-level delta, cost curve, max level.
+  // Each upgrade: base value, per-level delta, cost curve, max level, category.
+  const UPGRADE_CATS = {
+    offense: "Offense",
+    craft: "Arrowcraft",
+    defense: "Defense",
+    econ: "Economy",
+  };
+
   const UPGRADES = [
     {
-      id: "damage", name: "Arrow Power", ico: "🏹", max: 40,
+      id: "damage", name: "Arrow Power", ico: "🏹", max: 40, cat: "offense",
       base: 10, step: 6, baseCost: 25, costMul: 1.32,
       fmt: (v) => `${v} dmg`,
       desc: "Damage dealt by each arrow.",
     },
     {
-      id: "fireRate", name: "Draw Speed", ico: "⚡", max: 30,
-      base: 1.4, step: 0.22, baseCost: 30, costMul: 1.36,
+      id: "fireRate", name: "Draw Speed", ico: "⚡", max: 30, cat: "offense",
+      base: 0.9, step: 0.22, baseCost: 30, costMul: 1.36,
       fmt: (v) => `${v.toFixed(2)} /s`,
       desc: "Arrows fired per second while holding.",
     },
     {
-      id: "arrowSpeed", name: "Bolt Velocity", ico: "💨", max: 20,
+      id: "arrowSpeed", name: "Bolt Velocity", ico: "💨", max: 20, cat: "offense",
       base: 720, step: 70, baseCost: 20, costMul: 1.28,
-      fmt: (v) => `${Math.round(v)} px/s · ${Math.round(v * FLAT_TIME)} reach`,
+      fmt: (v) => `${Math.round(metres(v))} m/s · ${Math.round(metres(v * FLAT_TIME))} m reach`,
       desc: "Arrow speed — faster bolts also fly flat farther before dropping, and hit runners more easily.",
     },
     {
-      id: "multishot", name: "Multi-Shot", ico: "🎯", max: 6,
+      id: "multishot", name: "Multi-Shot", ico: "🎯", max: 6, cat: "offense",
       base: 1, step: 1, baseCost: 120, costMul: 2.0,
       fmt: (v) => `${v} arrow${v > 1 ? "s" : ""}`,
       desc: "Fire extra arrows in a spread each shot.",
     },
     {
-      id: "focus", name: "Focused Volley", ico: "🔭", max: 7,
+      id: "focus", name: "Focused Volley", ico: "🔭", max: 7, cat: "offense",
       base: 0, step: 0.12, baseCost: 90, costMul: 1.5,
       fmt: (v) => `${Math.round(v * 100)}% tighter`,
       desc: "Narrows the multi-shot spread so arrows stay grouped at long range.",
     },
     {
-      id: "pierce", name: "Piercing", ico: "🗡️", max: 8,
+      id: "pierce", name: "Piercing", ico: "🗡️", max: 8, cat: "offense",
       base: 0, step: 1, baseCost: 90, costMul: 1.7,
       fmt: (v) => `${v} enem${v === 1 ? "y" : "ies"}`,
       desc: "Arrows pass through this many extra foes.",
     },
     {
-      id: "crit", name: "Critical Eye", ico: "✨", max: 20,
+      id: "crit", name: "Critical Eye", ico: "✨", max: 20, cat: "offense",
       base: 0, step: 0.03, baseCost: 60, costMul: 1.4,
       fmt: (v) => `${Math.round(v * 100)}% (x2)`,
       desc: "Chance to deal double damage.",
     },
     {
-      id: "chill", name: "Frost Arrows", ico: "❄️", max: 10,
+      id: "apierce", name: "Armor Piercing", ico: "🔩", max: 12, cat: "craft",
+      base: 0, step: 0.05, baseCost: 90, costMul: 1.42,
+      fmt: (v) => v > 0 ? `${Math.round(v * 100)}% bypass` : "none",
+      desc: "Needle tips punch through plating — this share of every hit skips armor and bites health directly.",
+    },
+    {
+      id: "blunt", name: "Blunt Heads", ico: "🔨", max: 9, cat: "craft",
+      base: 1, step: 0.18, baseCost: 75, costMul: 1.4,
+      fmt: (v) => `x${v.toFixed(2)} vs armor`,
+      desc: "Heavy heads batter armor apart much faster. Does nothing once the plating is gone.",
+    },
+    {
+      id: "explosive", name: "Explosive Tips", ico: "💥", max: 10, cat: "craft",
+      base: 0, step: 0.09, baseCost: 150, costMul: 1.5,
+      fmt: (v) => v > 0 ? `${Math.round(v * 100)}% within ${metres(blastRadius(v)).toFixed(1)} m` : "none",
+      desc: "Hits burst, splashing every foe nearby. Armor soaks the blast just like a normal hit.",
+    },
+    {
+      id: "poison", name: "Toxic Coating", ico: "🧪", max: 10, cat: "craft",
+      base: 0, step: 0.06, baseCost: 115, costMul: 1.46,
+      fmt: (v) => v > 0 ? `${Math.round(v * 100)}% dmg/s · 4s` : "none",
+      desc: "Poisons on hit for 4s. Toxins seep under plating and always damage health.",
+    },
+    {
+      id: "chill", name: "Frost Arrows", ico: "❄️", max: 10, cat: "craft",
       base: 0, step: 0.06, baseCost: 75, costMul: 1.45,
       fmt: (v) => `${Math.round(v * 100)}% slow`,
       desc: "Hits chill foes, slowing them for 2s. Stronger hits stagger the horde.",
     },
     {
-      id: "wallHp", name: "Fortify Wall", ico: "🧱", max: 30,
+      id: "wallHp", name: "Fortify Wall", ico: "🧱", max: 30, cat: "defense",
       base: 100, step: 40, baseCost: 35, costMul: 1.3,
       fmt: (v) => `${v} HP`,
       desc: "Maximum castle wall integrity (also heals on buy).",
     },
     {
-      id: "regen", name: "Masons", ico: "🛠️", max: 20,
+      id: "regen", name: "Masons", ico: "🛠️", max: 20, cat: "defense",
       base: 0, step: 0.6, baseCost: 80, costMul: 1.45,
       fmt: (v) => `${v.toFixed(1)} HP/s`,
       desc: "Wall slowly repairs itself over time.",
     },
     {
-      id: "gold", name: "Bounty", ico: "🪙", max: 20,
+      id: "gold", name: "Bounty", ico: COIN_SVG, max: 20, cat: "econ",
       base: 1, step: 0.12, baseCost: 70, costMul: 1.5,
       fmt: (v) => `x${v.toFixed(2)}`,
       desc: "Multiplier on gold earned from kills.",
     },
     {
-      id: "tribute", name: "Tribute", ico: "📜", max: 20,
+      id: "tribute", name: "Tribute", ico: "📜", max: 20, cat: "econ",
       base: 0, step: 0.6, baseCost: 55, costMul: 1.4,
-      fmt: (v) => `${v.toFixed(1)} 🪙/s`,
+      fmt: (v) => `${v.toFixed(1)} ${COIN_SVG}/s`,
       desc: "Villagers pay a steady tribute every second.",
     },
     {
-      id: "interest", name: "Coin Vault", ico: "🏦", max: 15,
-      base: 0, step: 0.012, baseCost: 120, costMul: 1.55,
-      fmt: (v) => `${(v * 100).toFixed(1)}% / 5s`,
-      desc: "Earn interest on the gold you're holding, every 5 seconds. Hoard to compound.",
+      id: "interest", name: "Coin Vault", ico: "🏦", max: 12, cat: "econ",
+      base: 0, step: 0.005, baseCost: 160, costMul: 1.6,
+      fmt: (v) => v > 0 ? `${(v * 100).toFixed(1)}% / 5s · max ${vaultCap(v)}` : "none",
+      desc: "Interest on the gold you hold, every 5 seconds — but the vault only pays out up to its capacity.",
     },
   ];
 
@@ -158,8 +206,21 @@
   const GRAVITY = 900;          // px/s² applied to spent arrows
   const INTEREST_PERIOD = 5;    // seconds between interest payouts
   const CHILL_DURATION = 2;     // seconds an enemy stays chilled after a hit
+  const POISON_DURATION = 4;    // seconds a poison stack lasts (refreshed on re-hit)
   const REFUND_RATE = 0.75;     // fraction of a level's cost returned when sold
   const FLAT_TIME = 0.85;       // seconds an arrow flies flat before gravity (reach = speed x this)
+  const DIVE_DIST = 300;        // px before the wall where flyers start their swoop
+
+  // Armor: a separate pool that must be chewed through before health takes hits.
+  // A plain arrow only lands this fraction of its damage on plating, so armor is
+  // worth ~2x its number in effective HP until you invest in Blunt Heads.
+  const ARMOR_SOAK = 0.5;
+  // Coin Vault payout ceiling. Interest is capped per payout so it can no longer
+  // compound into infinite gold — it is a strong stipend, not a money printer.
+  const INTEREST_STEP = 0.005;
+  const VAULT_CAP_PER_LEVEL = 26;
+  function vaultCap(rate) { return Math.round((rate / INTEREST_STEP) * VAULT_CAP_PER_LEVEL); }
+  function blastRadius(v) { return 44 + v * 95; }
 
   function upgValue(u, lvl) { return u.base + u.step * lvl; }
   function upgCost(u, lvl) { return Math.round(u.baseCost * Math.pow(u.costMul, lvl)); }
@@ -199,6 +260,7 @@
   const enemies = [];
   const particles = [];
   const floaters = [];   // floating damage / gold text
+  const blasts = [];     // expanding explosion rings
 
   function stat(id) { return upgValue(UPGRADES.find(u => u.id === id), state.levels[id] || 0); }
 
@@ -224,54 +286,98 @@
     hit() { this.blip(260, 0.06, "triangle", 0.05); },
     kill() { this.blip(160, 0.14, "sawtooth", 0.05); },
     hurt() { this.blip(90, 0.22, "sawtooth", 0.09); },
+    crack() { this.blip(1200, 0.05, "square", 0.05); setTimeout(() => this.blip(300, 0.12, "square", 0.05), 40); },
+    boom() { this.blip(70, 0.18, "sawtooth", 0.07); },
     wave() { this.blip(440, 0.12, "sine", 0.06); setTimeout(() => this.blip(660, 0.14, "sine", 0.06), 110); },
     buy() { this.blip(700, 0.08, "sine", 0.06); setTimeout(() => this.blip(950, 0.09, "sine", 0.06), 70); },
     sell() { this.blip(520, 0.08, "sine", 0.05); setTimeout(() => this.blip(360, 0.09, "sine", 0.05), 60); },
   };
 
   // ---------- enemy archetypes ----------
+  // `armor` is a plated pool in front of health (see ARMOR_SOAK).
+  // `fly` marks an airborne foe: lo/hi are its cruising band as a fraction of
+  // the sky, amp/freq drive the bob. Flyers ignore the ground and must be aimed at.
   const ENEMY_TYPES = {
     grunt:  { r: 16, speed: 42,  hp: 30,  dmg: 8,  gold: 5,  color: "#8a6f4e", eye: "#ffd27f", name: "Grunt" },
     runner: { r: 12, speed: 96,  hp: 18,  dmg: 6,  gold: 6,  color: "#4e7a8a", eye: "#9ff0ff", name: "Runner" },
     brute:  { r: 26, speed: 28,  hp: 120, dmg: 20, gold: 16, color: "#6b3b45", eye: "#ff9aa7", name: "Brute" },
     shaman: { r: 15, speed: 52,  hp: 55,  dmg: 10, gold: 12, color: "#5a4a86", eye: "#c9a6ff", name: "Shaman" },
-    miniboss:{ r: 34, speed: 26, hp: 420, dmg: 30, gold: 120, color: "#3a5a3f", eye: "#c7ff9a", name: "Ogre" },
-    boss:   { r: 46, speed: 22,  hp: 2600,dmg: 60, gold: 400, color: "#7a1f2b", eye: "#ffdd55", name: "Warlord" },
+    // siege line — most of their bulk is plating, not flesh
+    sapper: { r: 18, speed: 46,  hp: 40,  armor: 60,  dmg: 12, gold: 16, color: "#6d6a5c", eye: "#ffe9a8", name: "Sapper" },
+    ram:    { r: 30, speed: 20,  hp: 150, armor: 200, dmg: 44, gold: 42, color: "#575046", eye: "#ffc27a", name: "Siege Ram" },
+    // flyers — no legs on the ground, they cruise in and dive at the battlements
+    bat:    { r: 11, speed: 118, hp: 20,  dmg: 7,  gold: 8,  color: "#4a3a63", eye: "#ffb0f0", name: "Bat",
+              fly: { lo: 0.32, hi: 0.74, amp: 26, freq: 3.0 } },
+    harpy:  { r: 16, speed: 76,  hp: 65,  dmg: 14, gold: 18, color: "#7a5a3a", eye: "#ffe08a", name: "Harpy",
+              fly: { lo: 0.24, hi: 0.62, amp: 40, freq: 1.6 } },
+    wyvern: { r: 22, speed: 56,  hp: 150, armor: 80, dmg: 26, gold: 34, color: "#3f6b52", eye: "#b6ffdd", name: "Wyvern",
+              fly: { lo: 0.16, hi: 0.52, amp: 34, freq: 1.1 } },
+    // bosses
+    miniboss: { r: 34, speed: 26, hp: 420, dmg: 30, gold: 120, color: "#3a5a3f", eye: "#c7ff9a", name: "Ogre" },
+    siegeboss:{ r: 36, speed: 20, hp: 260, armor: 300, dmg: 55, gold: 150, color: "#5b5347", eye: "#ffd08a", name: "Siege Tower" },
+    skyboss:  { r: 30, speed: 46, hp: 380, armor: 90,  dmg: 40, gold: 160, color: "#2f4d6b", eye: "#9fe8ff", name: "Sky Terror",
+                fly: { lo: 0.14, hi: 0.50, amp: 50, freq: 0.9 } },
+    boss:     { r: 46, speed: 22, hp: 2600, armor: 700, dmg: 60, gold: 400, color: "#7a1f2b", eye: "#ffdd55", name: "Warlord" },
   };
 
+  const BOSS_TYPES = new Set(["miniboss", "siegeboss", "skyboss", "boss"]);
+  // endless cycles its mini-boss so each one demands a different answer:
+  // raw HP, then heavy plating, then an airborne target.
+  const MINIBOSS_ROTATION = ["miniboss", "siegeboss", "skyboss"];
+
   // ---------- wave generation ----------
-  // Returns an array of {type, delay} to spawn for a given wave number.
+  // Spawn table: `at` is the wave the type unlocks, `cost` its share of the wave
+  // budget, `w` its pick weight once available.
+  const SPAWN_TABLE = [
+    { type: "grunt",  at: 1,  cost: 1.0, w: 3.0 },
+    { type: "runner", at: 2,  cost: 1.1, w: 2.2 },
+    { type: "bat",    at: 3,  cost: 1.4, w: 2.0 },
+    { type: "brute",  at: 4,  cost: 3.2, w: 1.6 },
+    { type: "sapper", at: 5,  cost: 2.6, w: 1.8 },
+    { type: "shaman", at: 6,  cost: 2.2, w: 1.4 },
+    { type: "harpy",  at: 8,  cost: 3.0, w: 1.5 },
+    { type: "ram",    at: 11, cost: 6.0, w: 1.2 },
+    { type: "wyvern", at: 13, cost: 5.2, w: 1.3 },
+  ];
+
+  // Returns an array of {type} to spawn for a given wave number.
   function buildWave(n) {
     const q = [];
     if (state.mode === "levels" && n === 10) {
       // boss finale
-      for (let i = 0; i < 14; i++) q.push({ type: "grunt" });
-      for (let i = 0; i < 8; i++) q.push({ type: "runner" });
+      for (let i = 0; i < 12; i++) q.push({ type: "grunt" });
+      for (let i = 0; i < 6; i++) q.push({ type: "runner" });
+      for (let i = 0; i < 5; i++) q.push({ type: "bat" });
+      for (let i = 0; i < 3; i++) q.push({ type: "sapper" });
+      shuffleLight(q);
       q.push({ type: "boss" });
-      return shuffleLight(q);
+      return q;
     }
-    const budget = 6 + n * 3.2;            // "points" to spend on enemies
-    let pts = budget;
-    const costs = { grunt: 1, runner: 1.1, brute: 3.2, shaman: 2.2 };
-    // unlock schedule
-    const pool = ["grunt"];
-    if (n >= 2) pool.push("runner");
-    if (n >= 3) pool.push("brute");
-    if (n >= 4) pool.push("shaman");
+    const pool = SPAWN_TABLE.filter(e => n >= e.at);
+    const totalW = pool.reduce((s, e) => s + e.w, 0);
+    let pts = 6 + n * 2.6;                 // "points" to spend on enemies
     let guard = 0;
     while (pts > 0 && guard++ < 400) {
-      const t = pool[(Math.random() * pool.length) | 0];
-      if (costs[t] > pts + 0.5) { pts = 0; break; }
-      q.push({ type: t });
-      pts -= costs[t];
+      let roll = Math.random() * totalW;
+      let pick = pool[0];
+      for (const e of pool) { roll -= e.w; if (roll <= 0) { pick = e; break; } }
+      if (pick.cost > pts + 0.5) { break; }
+      q.push({ type: pick.type });
+      pts -= pick.cost;
     }
     shuffleLight(q);
-    // endless: a scaling mini-boss headlines every Nth wave (spawns last)
-    if (state.mode === "endless" && n % MINIBOSS_EVERY === 0) q.push({ type: "miniboss" });
+    // mini-bosses headline their wave and spawn last
+    if (isMiniBossWave(n)) q.push({ type: miniBossFor(n) });
+    else if (state.mode === "levels" && n === 5) q.push({ type: "miniboss" });
     return q;
   }
   function isMiniBossWave(n) {
-    return state.mode === "endless" && n % MINIBOSS_EVERY === 0;
+    return state.mode === "endless" && n > 0 && n % MINIBOSS_EVERY === 0;
+  }
+  // Which mini-boss belongs to an endless mini-boss wave (5 -> Ogre, 10 -> Tower, ...).
+  function miniBossFor(n) {
+    const idx = Math.floor(n / MINIBOSS_EVERY) - 1;
+    return MINIBOSS_ROTATION[idx % MINIBOSS_ROTATION.length];
   }
   function shuffleLight(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -281,33 +387,53 @@
     return arr;
   }
 
-  // hp/dmg scaling so late waves stay threatening
-  function waveScale(n) { return 1 + (n - 1) * 0.14 + Math.pow(n, 1.35) * 0.012; }
+  // Enemy scaling. HP (and armor) climb geometrically so stacking Arrow Power
+  // alone can never keep pace — you have to answer with the right tool. Damage
+  // and especially gold grow far slower, so the economy can't outrun the horde.
+  function waveScale(n) { return Math.pow(1.13, n - 1) * (1 + (n - 1) * 0.05); }
+  const DMG_SCALE_POW = 0.6;
+  const GOLD_SCALE_POW = 0.55;
 
   function spawnEnemy(type) {
     const base = ENEMY_TYPES[type];
     const scale = waveScale(state.wave);
     const fixed = type === "boss";              // campaign boss is balanced as a fixed fight
-    const isBoss = type === "boss" || type === "miniboss"; // boss visuals + behaviour
-    const hp = Math.round(base.hp * (fixed ? 1 : scale));
+    const isBoss = BOSS_TYPES.has(type);
+    const bulk = fixed ? 1 : scale;
+    const hp = Math.round(base.hp * bulk);
+    const armor = Math.round((base.armor || 0) * bulk);
+    const fly = base.fly || null;
+    // pick a cruising altitude inside this type's band
+    const homeY = fly
+      ? world.groundY * (fly.lo + Math.random() * (fly.hi - fly.lo))
+      : world.groundY - base.r;
     enemies.push({
       type,
       x: -40,
-      y: world.groundY - base.r,
+      y: homeY,
+      homeY,            // altitude it cruises at before the dive
+      fly,
+      phase: Math.random() * Math.PI * 2,   // desync the wing bob between flyers
       r: base.r,
       speed: base.speed * (0.9 + Math.random() * 0.2),
       hp,
       maxHp: hp,
-      dmg: Math.round(base.dmg * (fixed ? 1 : (1 + (scale - 1) * 0.6))),
-      gold: Math.round(base.gold * (fixed ? 1 : (1 + (scale - 1) * 0.5))),
+      armor,
+      armorMax: armor,
+      dmg: Math.round(base.dmg * (fixed ? 1 : Math.pow(scale, DMG_SCALE_POW))),
+      gold: Math.round(base.gold * (fixed ? 1 : Math.pow(scale, GOLD_SCALE_POW))),
       color: base.color,
       eye: base.eye,
       name: base.name,
       boss: isBoss,
       wob: Math.random() * Math.PI * 2,     // walk animation phase
       hitFlash: 0,
+      armorFlash: 0,    // white plating flash when armor takes a hit
       slowTimer: 0,     // remaining seconds of chill
       slowFactor: 0,    // fraction of speed removed while chilled
+      poisonTimer: 0,   // remaining seconds of poison
+      poisonDps: 0,     // health damage per second while poisoned
+      poisonTick: 0,    // accumulator so poison floaters don't spam
     });
   }
 
@@ -322,7 +448,10 @@
     ui.setWave(n);
     ui.setProgress();
     if (state.mode === "levels" && n === 10) banner("FINAL WAVE", "10 / 10 — the Warlord");
-    else if (isMiniBossWave(n)) banner("Mini-Boss Wave", `Wave ${n} — an Ogre approaches`);
+    else if (isMiniBossWave(n)) {
+      const mb = ENEMY_TYPES[miniBossFor(n)];
+      banner("Mini-Boss Wave", `Wave ${n} — ${mb.name} approaches`);
+    } else if (state.mode === "levels" && n === 5) banner("Mini-Boss Wave", "5 / 10 — an Ogre approaches");
     else banner("Wave " + n, state.mode === "levels" ? `${n} / 10` : "Endless");
     sound.wave();
   }
@@ -333,7 +462,7 @@
     const bonus = 20 + state.wave * 8;
     addGold(bonus, world.ballista.x, world.ballista.y - 40, true);
     state.betweenWaves = 3.0;   // breather before next wave
-    banner("Wave cleared!", `+${bonus} 🪙  ·  next in 3s`);
+    banner("Wave cleared!", `+${bonus} ${COIN_SVG}  ·  next in 3s`);
   }
 
   // ---------- shooting ----------
@@ -374,22 +503,82 @@
   }
 
   // ---------- damage / effects ----------
-  function damageEnemy(e, dmg, isCrit) {
-    e.hp -= dmg;
-    e.hitFlash = 0.12;
-    // frost arrows chill the target (bosses resist, only half the slow)
-    const chill = stat("chill");
-    if (chill > 0) {
-      e.slowFactor = e.boss ? chill * 0.5 : chill;
-      e.slowTimer = CHILL_DURATION;
+  // Routes a hit through armor first. `splash` hits are quieter (no crit text,
+  // no on-hit effects) so an explosion doesn't blanket the field in status.
+  function damageEnemy(e, dmg, isCrit, splash) {
+    let toHp = dmg, toArmor = 0;
+    if (e.armor > 0) {
+      const ap = stat("apierce");
+      const blunt = stat("blunt");
+      toHp = dmg * ap;                               // armor piercing skips the plating
+      toArmor = dmg * (1 - ap) * ARMOR_SOAK * blunt;
+      if (toArmor >= e.armor) {
+        // plating shatters — the surplus carries on to health at its raw value
+        toHp += (toArmor - e.armor) / (ARMOR_SOAK * blunt);
+        toArmor = e.armor;
+        e.armor = 0;
+        e.armorFlash = 0.3;
+        breakArmor(e);
+      } else {
+        e.armor -= toArmor;
+        e.armorFlash = 0.12;
+      }
     }
-    floaters.push({ x: e.x, y: e.y - e.r - 6, text: Math.round(dmg) + (isCrit ? "!" : ""),
-      color: isCrit ? "#ffd94a" : "#ffffff", vy: -34, life: 0.6, size: isCrit ? 20 : 14 });
+    e.hp -= toHp;
+    e.hitFlash = 0.12;
+
+    if (!splash) {
+      // frost arrows chill the target (bosses resist, only half the slow)
+      const chill = stat("chill");
+      if (chill > 0) {
+        e.slowFactor = e.boss ? chill * 0.5 : chill;
+        e.slowTimer = CHILL_DURATION;
+      }
+      // toxins bypass plating entirely — the siege answer that armor can't stop
+      const tox = stat("poison");
+      if (tox > 0) {
+        e.poisonDps = Math.max(e.poisonDps, dmg * tox);
+        e.poisonTimer = POISON_DURATION;
+      }
+    }
+
+    // one floater per hit — steel-coloured while the plating is still soaking it
+    const armorHit = toArmor > toHp;
+    floaters.push({
+      x: e.x, y: e.y - e.r - 6,
+      text: Math.round(Math.max(toArmor, toHp)) + (isCrit ? "!" : ""),
+      color: armorHit ? "#aebdd4" : isCrit ? "#ffd94a" : "#ffffff",
+      vy: -34, life: splash ? 0.4 : 0.6, size: isCrit ? 20 : 14,
+    });
     for (let i = 0; i < (isCrit ? 8 : 4); i++) {
-      particles.push(spark(e.x, e.y, e.eye));
+      particles.push(spark(e.x, e.y, armorHit ? "#dfe6f2" : e.eye));
     }
     if (e.hp <= 0) killEnemy(e);
-    else sound.hit();
+    else if (!splash) sound.hit();
+  }
+
+  // plating gives way — steel shards and a distinct crack
+  function breakArmor(e) {
+    for (let i = 0; i < 14; i++) particles.push(spark(e.x, e.y, "#e6ecf7", 1.3));
+    floaters.push({ x: e.x, y: e.y - e.r - 22, text: "ARMOR BROKEN", color: "#cfd8ea",
+      vy: -26, life: 0.8, size: 13 });
+    sound.crack();
+  }
+
+  // Explosive tips: splash everything around the impact, falling off with range.
+  function explode(x, y, dmg, radius, source) {
+    for (let i = 0; i < enemies.length; i++) {
+      const e = enemies[i];
+      if (e.dead || e === source) continue;
+      const d = Math.hypot(e.x - x, e.y - y) - e.r;
+      if (d <= radius) {
+        const falloff = 1 - Math.max(0, d) / radius * 0.6;
+        damageEnemy(e, dmg * falloff, false, true);
+      }
+    }
+    blasts.push({ x, y, r: radius, life: 0.3, max: 0.3 });
+    for (let i = 0; i < 10; i++) particles.push(spark(x, y, "#ffb14a", 1.4));
+    sound.boom();
   }
 
   function killEnemy(e) {
@@ -406,7 +595,7 @@
     state.gold += amount;
     state.goldEarned += amount;
     floaters.push({ x, y, text: "+" + amount, color: "#ffcf5c", vy: -30, life: big ? 1.1 : 0.7,
-      size: big ? 22 : 15, icon: "🪙" });
+      size: big ? 22 : 15, coin: true });
     ui.setGold();
   }
 
@@ -464,7 +653,8 @@
       state.interestTimer -= dt;
       if (state.interestTimer <= 0) {
         state.interestTimer += INTEREST_PERIOD;
-        const gain = Math.floor(state.gold * iRate);
+        // capped payout — the vault holds only so much, so interest can't compound away
+        const gain = Math.floor(Math.min(state.gold * iRate, vaultCap(iRate)));
         if (gain >= 1) addGold(gain, world.ballista.x - 6, world.ballista.y - 64, true);
       }
     } else {
@@ -528,7 +718,10 @@
         const dx = e.x - a.x, dy = e.y - a.y;
         if (dx * dx + dy * dy <= (e.r + 4) * (e.r + 4)) {
           const isCrit = Math.random() < stat("crit");
-          damageEnemy(e, a.dmg * (isCrit ? 2 : 1), isCrit);
+          const hit = a.dmg * (isCrit ? 2 : 1);
+          damageEnemy(e, hit, isCrit);
+          const aoe = stat("explosive");
+          if (aoe > 0) explode(a.x, a.y, hit * aoe, blastRadius(aoe), e);
           a.hitIds.add(e);
           if (a.pierceLeft <= 0) { arrows.splice(i, 1); break; }
           a.pierceLeft--;
@@ -542,20 +735,53 @@
       const e = enemies[i];
       if (e.dead) { enemies.splice(i, 1); continue; }
       if (e.hitFlash > 0) e.hitFlash -= dt;
+      if (e.armorFlash > 0) e.armorFlash -= dt;
+
+      // poison burns health directly, straight through any plating
+      if (e.poisonTimer > 0) {
+        e.poisonTimer -= dt;
+        const tick = e.poisonDps * dt;
+        e.hp -= tick;
+        e.poisonTick += tick;
+        if (e.poisonTick >= Math.max(4, e.maxHp * 0.02)) {
+          floaters.push({ x: e.x + (Math.random() - 0.5) * e.r, y: e.y - e.r - 2,
+            text: Math.round(e.poisonTick), color: "#9ff06a", vy: -26, life: 0.5, size: 13 });
+          e.poisonTick = 0;
+        }
+        if (Math.random() < dt * 8) particles.push(spark(e.x, e.y, "#8fdc5a", 0.7));
+        if (e.hp <= 0) { killEnemy(e); enemies.splice(i, 1); continue; }
+      }
+
       // chill: reduce effective speed while the slow timer is active
       let sp = e.speed;
       if (e.slowTimer > 0) {
         e.slowTimer -= dt;
         sp *= Math.max(0.1, 1 - e.slowFactor);
       }
-      e.wob += dt * (sp * 0.06);   // waddle slows with them
       e.x += sp * dt;
+
+      if (e.fly) {
+        // cruise in, then swoop down onto the battlements over the last stretch
+        const dive = clamp((e.x - (world.wallX - DIVE_DIST)) / DIVE_DIST, 0, 1);
+        const target = e.homeY + (world.groundY - 110 - e.homeY) * dive;
+        e.wob += dt * e.fly.freq * 7;                 // wing beat
+        e.y = target + Math.sin(state.time * e.fly.freq * 2 + e.phase) * e.fly.amp * (1 - dive * 0.7);
+      } else {
+        e.wob += dt * (sp * 0.06);   // waddle slows with them
+      }
+
       // reached wall?
       if (e.x + e.r >= world.wallX) {
         damageWall(e.dmg, e.y);
         e.dead = true;
         enemies.splice(i, 1);
       }
+    }
+
+    // explosion rings
+    for (let i = blasts.length - 1; i >= 0; i--) {
+      blasts[i].life -= dt;
+      if (blasts[i].life <= 0) blasts.splice(i, 1);
     }
 
     // particles
@@ -604,6 +830,7 @@
     enemies.forEach(drawEnemy);
     arrows.forEach(drawArrow);
     drawBallista();
+    blasts.forEach(drawBlast);
     particles.forEach(drawParticle);
     floaters.forEach(drawFloater);
     drawAimGuide();
@@ -798,28 +1025,71 @@
   }
 
   function drawEnemy(e) {
-    const bob = Math.sin(e.wob) * (e.r * 0.12);
+    const bob = e.fly ? 0 : Math.sin(e.wob) * (e.r * 0.12);
     const x = e.x, y = e.y + bob;
-    // shadow
-    ctx.fillStyle = "rgba(0,0,0,0.28)";
-    ctx.beginPath(); ctx.ellipse(x, world.groundY - 2, e.r * 0.9, e.r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
-
-    // body
-    ctx.save();
-    if (e.hitFlash > 0) { ctx.globalAlpha = 1; }
-    ctx.fillStyle = e.hitFlash > 0 ? "#ffffff" : e.color;
+    // ground shadow — flyers cast a faint, flattened one from altitude
+    const alt = e.fly ? clamp((world.groundY - y) / world.groundY, 0, 1) : 0;
+    ctx.fillStyle = `rgba(0,0,0,${0.28 * (1 - alt * 0.75)})`;
     ctx.beginPath();
-    ctx.arc(x, y, e.r, 0, Math.PI * 2);
+    ctx.ellipse(x, world.groundY - 2, e.r * (0.9 - alt * 0.35), e.r * 0.3, 0, 0, Math.PI * 2);
     ctx.fill();
-    // little legs
-    ctx.strokeStyle = e.hitFlash > 0 ? "#ffffff" : e.color;
-    ctx.lineWidth = Math.max(2, e.r * 0.16);
-    const legSwing = Math.sin(e.wob) * e.r * 0.3;
-    ctx.beginPath();
-    ctx.moveTo(x - e.r * 0.4, y + e.r * 0.7); ctx.lineTo(x - e.r * 0.4 + legSwing, world.groundY - 1);
-    ctx.moveTo(x + e.r * 0.4, y + e.r * 0.7); ctx.lineTo(x + e.r * 0.4 - legSwing, world.groundY - 1);
-    ctx.stroke();
+
+    ctx.save();
+    const tint = e.hitFlash > 0 ? "#ffffff" : e.color;
+    if (e.fly) {
+      // wings beat behind the body
+      const flap = Math.sin(e.wob);
+      ctx.strokeStyle = tint;
+      ctx.lineWidth = Math.max(2, e.r * 0.2);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x - e.r * 0.3, y);
+      ctx.quadraticCurveTo(x - e.r * 1.4, y - e.r * (0.5 + flap * 0.8), x - e.r * 2.0, y + e.r * flap * 0.5);
+      ctx.moveTo(x + e.r * 0.3, y);
+      ctx.quadraticCurveTo(x + e.r * 1.4, y - e.r * (0.5 + flap * 0.8), x + e.r * 2.0, y + e.r * flap * 0.5);
+      ctx.stroke();
+      ctx.lineCap = "butt";
+      // body
+      ctx.fillStyle = tint;
+      ctx.beginPath();
+      ctx.ellipse(x, y, e.r, e.r * 0.85, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // body
+      ctx.fillStyle = tint;
+      ctx.beginPath();
+      ctx.arc(x, y, e.r, 0, Math.PI * 2);
+      ctx.fill();
+      // little legs
+      ctx.strokeStyle = tint;
+      ctx.lineWidth = Math.max(2, e.r * 0.16);
+      const legSwing = Math.sin(e.wob) * e.r * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x - e.r * 0.4, y + e.r * 0.7); ctx.lineTo(x - e.r * 0.4 + legSwing, world.groundY - 1);
+      ctx.moveTo(x + e.r * 0.4, y + e.r * 0.7); ctx.lineTo(x + e.r * 0.4 - legSwing, world.groundY - 1);
+      ctx.stroke();
+    }
     ctx.restore();
+
+    // armor plating — a steel shell that thins out as it's battered away
+    if (e.armor > 0) {
+      const frac = e.armor / e.armorMax;
+      ctx.save();
+      ctx.strokeStyle = e.armorFlash > 0 ? "#ffffff" : "#b9c4d6";
+      ctx.lineWidth = Math.max(2, e.r * 0.22 * (0.4 + frac * 0.6));
+      ctx.beginPath();
+      ctx.arc(x, y, e.r + 3, -Math.PI * 0.62, Math.PI * 0.62);
+      ctx.stroke();
+      // rivets along the plate
+      ctx.fillStyle = e.armorFlash > 0 ? "#ffffff" : "#8f9bb0";
+      for (let i = -1; i <= 1; i++) {
+        const a = i * 0.44;
+        ctx.beginPath();
+        ctx.arc(x + Math.cos(a) * (e.r + 3), y + Math.sin(a) * (e.r + 3), Math.max(1.2, e.r * 0.08), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
 
     // frost overlay while chilled — fades as the slow wears off
     if (e.slowTimer > 0) {
@@ -831,6 +1101,15 @@
       ctx.strokeStyle = "#d6f6ff";
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(x, y, e.r + 2, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
+    // poison haze while the toxin is working
+    if (e.poisonTimer > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, e.poisonTimer / POISON_DURATION) * 0.32;
+      ctx.fillStyle = "#8fdc5a";
+      ctx.beginPath(); ctx.arc(x, y, e.r + 1, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
@@ -847,10 +1126,20 @@
       ctx.stroke();
     }
 
-    // hp bar
-    if (e.hp < e.maxHp) {
+    // hp bar, with a steel armor bar stacked above it while plating remains
+    if (e.hp < e.maxHp || e.armor > 0) {
       const bw = e.r * 2.1, bh = e.boss ? 7 : 4;
-      const bx = x - bw / 2, byy = y - e.r - (e.boss ? 16 : 10);
+      const bx = x - bw / 2;
+      // keep the health bar where it always sat and stack armor on top of it
+      let byy = y - e.r - (e.boss ? 16 : 10) - (e.armorMax > 0 ? bh + 3 : 0);
+      if (e.armorMax > 0) {
+        const af = Math.max(0, e.armor / e.armorMax);
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(bx - 1, byy - 1, bw + 2, bh + 2);
+        ctx.fillStyle = "#c3cede";
+        ctx.fillRect(bx, byy, bw * af, bh);
+        byy += bh + 3;
+      }
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(bx - 1, byy - 1, bw + 2, bh + 2);
       const frac = Math.max(0, e.hp / e.maxHp);
@@ -859,10 +1148,23 @@
     }
     if (e.boss) {
       ctx.fillStyle = "#ffdd55";
-      ctx.font = "bold 13px Segoe UI";
+      ctx.font = `bold 13px ${CANVAS_FONT}`;
       ctx.textAlign = "center";
-      ctx.fillText("⚔ " + e.name, x, y - e.r - 24);
+      ctx.fillText(e.name, x, y - e.r - (e.armorMax > 0 ? 34 : 24));
     }
+  }
+
+  function drawBlast(b) {
+    const t = 1 - b.life / b.max;          // 0 at ignition -> 1 as it dissipates
+    ctx.save();
+    ctx.globalAlpha = (1 - t) * 0.6;
+    ctx.strokeStyle = "#ffb14a";
+    ctx.lineWidth = 3 * (1 - t) + 1;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r * (0.35 + t * 0.75), 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = (1 - t) * 0.22;
+    ctx.fillStyle = "#ff8a3c";
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r * (0.3 + t * 0.6), 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
 
   function drawParticle(p) {
@@ -872,12 +1174,32 @@
     ctx.globalAlpha = 1;
   }
 
+  // The gold indicator is drawn with paths, never as an emoji. U+1FA99 🪙 is an
+  // Emoji-12 codepoint that older Segoe UI Emoji builds don't ship, so it lands
+  // as a tofu box; a vector coin can't be broken by a missing glyph.
+  function drawCoin(x, y, r) {
+    ctx.fillStyle = "#d99a2b";
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd95c";
+    ctx.beginPath(); ctx.arc(x, y, r * 0.74, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#d99a2b";
+    ctx.fillRect(x - r * 0.12, y - r * 0.4, r * 0.24, r * 0.8);
+  }
+
   function drawFloater(f) {
     ctx.globalAlpha = Math.max(0, Math.min(1, f.life * 1.6));
+    ctx.font = `bold ${f.size}px ${CANVAS_FONT}`;
+    ctx.textAlign = "left";
+    const tw = ctx.measureText(f.text).width;
+    const cr = f.size * 0.34, gap = 4;
+    const total = f.coin ? cr * 2 + gap + tw : tw;
+    let tx = f.x - total / 2;            // centre the coin + text as one unit
+    if (f.coin) {
+      drawCoin(tx + cr, f.y - f.size * 0.3, cr);
+      tx += cr * 2 + gap;
+    }
     ctx.fillStyle = f.color;
-    ctx.font = `bold ${f.size}px Segoe UI`;
-    ctx.textAlign = "center";
-    ctx.fillText((f.icon ? f.icon + " " : "") + f.text, f.x, f.y);
+    ctx.fillText(f.text, tx, f.y);
     ctx.globalAlpha = 1;
   }
 
@@ -975,7 +1297,8 @@
     setProgress() {
       const frac = this.waveFraction();
       const remaining = state.spawnQueue.length + enemies.length;
-      const special = (state.mode === "levels" && state.wave >= 10) || isMiniBossWave(state.wave);
+      const special = (state.mode === "levels" && (state.wave >= 10 || state.wave === 5))
+        || isMiniBossWave(state.wave);
       let label;
       if (state.wave < 1) label = "Get ready…";
       else if (state.betweenWaves > 0 && remaining === 0) label = "Wave cleared — next incoming";
@@ -1037,7 +1360,7 @@
         btn.disabled = true;
       } else {
         btn.classList.remove("maxed");
-        btn.innerHTML = `🪙 ${cost}`;
+        btn.innerHTML = `${COIN_SVG} ${cost}`;
         btn.disabled = state.gold < cost;
       }
       const sell = card.querySelector(".upg-sell");
@@ -1053,7 +1376,15 @@
 
   function buildUpgradeCards() {
     ui.el.upList.innerHTML = "";
+    let lastCat = null;
     UPGRADES.forEach(u => {
+      if (u.cat !== lastCat) {
+        lastCat = u.cat;
+        const head = document.createElement("div");
+        head.className = "upg-group";
+        head.textContent = UPGRADE_CATS[u.cat] || u.cat;
+        ui.el.upList.appendChild(head);
+      }
       const card = document.createElement("div");
       card.className = "upg";
       card.id = "upg-" + u.id;
@@ -1155,7 +1486,7 @@
     // default aim points left toward the incoming horde until the cursor moves
     state.aim.x = world.ballista.x - 320;
     state.aim.y = world.ballista.y;
-    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0;
+    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0; blasts.length = 0;
 
     ui.el.menu.classList.add("hidden");
     ui.el.endModal.classList.add("hidden");
