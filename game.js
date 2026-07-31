@@ -89,14 +89,8 @@
     {
       id: "arrowSpeed", name: "Bolt Velocity", ico: "💨", max: 20,
       base: 720, step: 70, baseCost: 20, costMul: 1.28,
-      fmt: (v) => `${Math.round(v)} px/s`,
-      desc: "How fast arrows travel — easier to hit runners.",
-    },
-    {
-      id: "range", name: "Arrow Range", ico: "📏", max: 24,
-      base: 460, step: 80, baseCost: 22, costMul: 1.27,
-      fmt: (v) => `${Math.round(v)} px`,
-      desc: "Distance an arrow flies flat before gravity pulls it down.",
+      fmt: (v) => `${Math.round(v)} px/s · ${Math.round(v * FLAT_TIME)} reach`,
+      desc: "Arrow speed — faster bolts also fly flat farther before dropping, and hit runners more easily.",
     },
     {
       id: "multishot", name: "Multi-Shot", ico: "🎯", max: 6,
@@ -165,6 +159,7 @@
   const INTEREST_PERIOD = 5;    // seconds between interest payouts
   const CHILL_DURATION = 2;     // seconds an enemy stays chilled after a hit
   const REFUND_RATE = 0.75;     // fraction of a level's cost returned when sold
+  const FLAT_TIME = 0.85;       // seconds an arrow flies flat before gravity (reach = speed x this)
 
   function upgValue(u, lvl) { return u.base + u.step * lvl; }
   function upgCost(u, lvl) { return Math.round(u.baseCost * Math.pow(u.costMul, lvl)); }
@@ -353,7 +348,7 @@
     // face left-ish only (can't shoot behind the wall)
     const speed = stat("arrowSpeed");
     const dmg = stat("damage");
-    const range = stat("range");
+    const range = speed * FLAT_TIME;   // flat reach derives from arrow speed
     const shots = Math.round(stat("multishot"));
     // angular gap between adjacent arrows, tightened by the Focused Volley upgrade
     const spread = 0.12 * (1 - stat("focus"));
@@ -892,7 +887,7 @@
     const ang = Math.atan2(state.aim.y - by, state.aim.x - bx);
     // simulate the real projectile arc (flat until range, then gravity) for honest feedback
     const speed = stat("arrowSpeed");
-    const range = stat("range");
+    const range = speed * FLAT_TIME;
     let x = bx + Math.cos(ang) * 34, y = by + Math.sin(ang) * 34;
     let vx = Math.cos(ang) * speed, vy = Math.sin(ang) * speed;
     let traveled = 0, falling = false, landX = null, landY = null;
