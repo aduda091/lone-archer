@@ -188,12 +188,16 @@
     // spawning
     spawnQueue: [],      // enemies pending in current wave
     spawnTimer: 0,
+    waveTotal: 0,        // enemies in the current wave (for progress bar)
     betweenWaves: 0,     // countdown before next wave
     aiming: false,
+    autoFire: false,     // fire continuously without holding
     aim: { x: 0, y: 0 },
     fireCooldown: 0,
     interestTimer: INTEREST_PERIOD,   // countdown to next interest payout
   };
+
+  const MINIBOSS_EVERY = 5;   // endless: a mini-boss appears on every Nth wave
 
   const arrows = [];
   const enemies = [];
@@ -235,6 +239,7 @@
     runner: { r: 12, speed: 96,  hp: 18,  dmg: 6,  gold: 6,  color: "#4e7a8a", eye: "#9ff0ff", name: "Runner" },
     brute:  { r: 26, speed: 28,  hp: 120, dmg: 20, gold: 16, color: "#6b3b45", eye: "#ff9aa7", name: "Brute" },
     shaman: { r: 15, speed: 52,  hp: 55,  dmg: 10, gold: 12, color: "#5a4a86", eye: "#c9a6ff", name: "Shaman" },
+    miniboss:{ r: 34, speed: 26, hp: 420, dmg: 30, gold: 120, color: "#3a5a3f", eye: "#c7ff9a", name: "Ogre" },
     boss:   { r: 46, speed: 22,  hp: 2600,dmg: 60, gold: 400, color: "#7a1f2b", eye: "#ffdd55", name: "Warlord" },
   };
 
@@ -264,7 +269,13 @@
       q.push({ type: t });
       pts -= costs[t];
     }
-    return shuffleLight(q);
+    shuffleLight(q);
+    // endless: a scaling mini-boss headlines every Nth wave (spawns last)
+    if (state.mode === "endless" && n % MINIBOSS_EVERY === 0) q.push({ type: "miniboss" });
+    return q;
+  }
+  function isMiniBossWave(n) {
+    return state.mode === "endless" && n % MINIBOSS_EVERY === 0;
   }
   function shuffleLight(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -280,17 +291,19 @@
   function spawnEnemy(type) {
     const base = ENEMY_TYPES[type];
     const scale = waveScale(state.wave);
-    const isBoss = type === "boss";
+    const fixed = type === "boss";              // campaign boss is balanced as a fixed fight
+    const isBoss = type === "boss" || type === "miniboss"; // boss visuals + behaviour
+    const hp = Math.round(base.hp * (fixed ? 1 : scale));
     enemies.push({
       type,
       x: -40,
       y: world.groundY - base.r,
       r: base.r,
       speed: base.speed * (0.9 + Math.random() * 0.2),
-      hp: Math.round(base.hp * (isBoss ? 1 : scale)),
-      maxHp: Math.round(base.hp * (isBoss ? 1 : scale)),
-      dmg: Math.round(base.dmg * (isBoss ? 1 : (1 + (scale - 1) * 0.6))),
-      gold: base.gold,
+      hp,
+      maxHp: hp,
+      dmg: Math.round(base.dmg * (fixed ? 1 : (1 + (scale - 1) * 0.6))),
+      gold: Math.round(base.gold * (fixed ? 1 : (1 + (scale - 1) * 0.5))),
       color: base.color,
       eye: base.eye,
       name: base.name,
@@ -306,11 +319,14 @@
   function startWave(n) {
     state.wave = n;
     state.spawnQueue = buildWave(n);
+    state.waveTotal = state.spawnQueue.length;
     state.spawnTimer = 0;
     state.betweenWaves = 0;
     ui.setWave(n);
-    banner(state.mode === "levels" && n === 10 ? "FINAL WAVE" : "Wave " + n,
-            state.mode === "levels" ? `${n} / 10` : "Endless");
+    ui.setProgress();
+    if (state.mode === "levels" && n === 10) banner("FINAL WAVE", "10 / 10 — the Warlord");
+    else if (isMiniBossWave(n)) banner("Mini-Boss Wave", `Wave ${n} — an Ogre approaches`);
+    else banner("Wave " + n, state.mode === "levels" ? `${n} / 10` : "Endless");
     sound.wave();
   }
 
@@ -326,7 +342,7 @@
   // ---------- shooting ----------
   function tryFire(dt) {
     state.fireCooldown -= dt;
-    if (!state.aiming || state.fireCooldown > 0) return;
+    if ((!state.aiming && !state.autoFire) || state.fireCooldown > 0) return;
     const rate = stat("fireRate");
     state.fireCooldown = 1 / rate;
 
@@ -474,6 +490,7 @@
     } else if (enemies.length === 0) {
       onWaveCleared();
     }
+    ui.setProgress();
 
     tryFire(dt);
 
@@ -812,7 +829,7 @@
   }
 
   function drawAimGuide() {
-    if (!state.aiming || !state.running || state.paused) return;
+    if ((!state.aiming && !state.autoFire) || !state.running || state.paused) return;
     const bx = world.ballista.x, by = world.ballista.y;
     const ang = Math.atan2(state.aim.y - by, state.aim.x - bx);
     // simulate the real projectile arc (flat until range, then gravity) for honest feedback
@@ -873,6 +890,9 @@
       modeText: document.getElementById("mode-text"),
       bestText: document.getElementById("best-text"),
       upList: document.getElementById("upgrade-list"),
+      progressFill: document.getElementById("progress-fill"),
+      progressLabel: document.getElementById("progress-label"),
+      btnAutofire: document.getElementById("btn-autofire"),
     },
     setWall() {
       const f = state.wallMax > 0 ? Math.max(0, state.wallHp / state.wallMax) : 0;
@@ -890,6 +910,42 @@
     },
     setWave(n) {
       this.el.waveText.textContent = state.mode === "levels" ? `Wave ${n}/10` : `Wave ${n}`;
+    },
+    // fraction [0..1] of the current wave that has been dealt with
+    waveFraction() {
+      if (state.wave < 1) return 0;
+      if (state.waveTotal <= 0) return state.betweenWaves > 0 ? 1 : 0;
+      const remaining = state.spawnQueue.length + enemies.length;
+      return Math.max(0, Math.min(1, 1 - remaining / state.waveTotal));
+    },
+    setProgress() {
+      let frac, label, boss;
+      if (state.mode === "levels") {
+        // overall campaign progress: completed waves + progress through this one
+        const done = Math.max(0, state.wave - 1) + this.waveFraction();
+        frac = Math.min(1, done / 10);
+        label = `Campaign · ${Math.min(10, Math.max(1, state.wave))} / 10`;
+        boss = state.wave >= 10;
+      } else {
+        // endless: progress toward the next mini-boss (every MINIBOSS_EVERY waves)
+        const w = Math.max(1, state.wave);
+        const into = ((w - 1) % MINIBOSS_EVERY) + this.waveFraction();
+        frac = Math.min(1, into / MINIBOSS_EVERY);
+        if (w % MINIBOSS_EVERY === 0) { label = "Mini-boss wave!"; boss = true; }
+        else {
+          const togo = MINIBOSS_EVERY - (w % MINIBOSS_EVERY);
+          label = `Mini-boss in ${togo} wave${togo === 1 ? "" : "s"}`;
+          boss = false;
+        }
+      }
+      this.el.progressFill.style.width = (frac * 100) + "%";
+      this.el.progressFill.classList.toggle("boss", !!boss);
+      this.el.progressLabel.textContent = label;
+    },
+    setAutofire() {
+      this.el.btnAutofire.classList.toggle("active", state.autoFire);
+      const cb = document.getElementById("autofire-toggle");
+      if (cb) cb.checked = state.autoFire;
     },
   };
 
@@ -1052,6 +1108,10 @@
     state.aiming = false;
     state.fireCooldown = 0;
     state.interestTimer = INTEREST_PERIOD;
+    state.waveTotal = 0;
+    // default aim points left toward the incoming horde until the cursor moves
+    state.aim.x = world.ballista.x - 320;
+    state.aim.y = world.ballista.y;
     arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0;
 
     ui.el.menu.classList.add("hidden");
@@ -1061,13 +1121,15 @@
     ui.el.modeText.textContent = mode === "levels" ? "Campaign" : "Endless";
     ui.setWall();
     ui.setGold();
+    ui.setAutofire();
+    ui.setProgress();
     buildUpgradeCards();
 
     // little grace period, then wave 1
     state.betweenWaves = 1.2;
     state.wave = 0;
     ui.setWave(1);
-    banner("Get ready", "Hold to shoot · U for upgrades");
+    banner("Get ready", state.autoFire ? "Auto-fire ON · U for upgrades" : "Hold to shoot · F auto-fire · U upgrades");
     lastT = performance.now();
   }
 
@@ -1125,11 +1187,19 @@
     e.preventDefault();
   }
   function onMove(e) {
-    if (!state.aiming) return;
+    // always track the cursor so auto-fire can aim without a button held
     const p = pointerPos(e);
     state.aim.x = p.x; state.aim.y = p.y;
   }
   function onUp() { state.aiming = false; }
+
+  // ---------- auto-fire ----------
+  function setAutoFire(on) {
+    state.autoFire = on;
+    ui.setAutofire();
+    try { localStorage.setItem("loneArcherAuto", on ? "1" : "0"); } catch (e) {}
+  }
+  function toggleAutoFire() { sound.ensure(); setAutoFire(!state.autoFire); }
 
   canvas.addEventListener("mousedown", onDown);
   window.addEventListener("mousemove", onMove);
@@ -1147,6 +1217,8 @@
       if (!state.running || state.over) return;
       if (ui.el.upModal.classList.contains("hidden")) openUpgrades();
       else closeUpgrades();
+    } else if (e.key === "f" || e.key === "F") {
+      toggleAutoFire();
     }
   });
 
@@ -1159,6 +1231,8 @@
   document.getElementById("btn-quit").addEventListener("click", quitToMenu);
   document.getElementById("btn-menu").addEventListener("click", quitToMenu);
   document.getElementById("btn-retry").addEventListener("click", () => startGame(state.mode));
+  document.getElementById("btn-autofire").addEventListener("click", toggleAutoFire);
+  document.getElementById("autofire-toggle").addEventListener("change", (e) => setAutoFire(e.target.checked));
 
   // sound toggles (kept in sync)
   function bindSound(id) {
@@ -1175,6 +1249,8 @@
   bindSound("sound-toggle-2");
 
   // ---------- boot ----------
+  try { state.autoFire = localStorage.getItem("loneArcherAuto") === "1"; } catch (e) {}
+  ui.setAutofire();
   establishField();
   loadBest();
   requestAnimationFrame(frame);

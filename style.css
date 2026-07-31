@@ -68,7 +68,51 @@ html, body {
 }
 .hud-pill .ico { font-size: 16px; }
 .hud-pill.gold { color: var(--gold); }
-#mode-pill { color: var(--muted); font-weight: 600; font-size: 13px; }
+
+/* wave / campaign progress */
+.progress-card {
+  min-width: 260px; max-width: 340px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 8px 14px 9px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  backdrop-filter: blur(6px);
+}
+.progress-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-weight: 700; font-size: 15px; margin-bottom: 6px;
+}
+.progress-mode { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: 0.5px; }
+.progress-bar {
+  position: relative; width: 100%; height: 8px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 6px; overflow: hidden;
+}
+#progress-fill {
+  position: absolute; inset: 0; width: 0%;
+  background: linear-gradient(90deg, var(--accent), #4aa6ff);
+  border-radius: 6px;
+  transition: width 0.25s ease;
+}
+#progress-fill.boss { background: linear-gradient(90deg, #ff9a4a, #ff5d6c); }
+.progress-label {
+  text-align: center; margin-top: 4px;
+  font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.3px;
+}
+
+/* toggle button (auto-fire) */
+.btn-toggle {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--panel-border);
+  box-shadow: none;
+}
+.btn-toggle.active {
+  background: linear-gradient(180deg, #ff8a4a, #e0642b);
+  color: #1a1206;
+  box-shadow: 0 6px 16px rgba(224, 100, 43, 0.4);
+}
 
 .wall-bar {
   position: relative;
@@ -284,6 +328,9 @@ kbd {
 @media (max-width: 560px) {
   .mode-select { flex-direction: column; }
   .upgrade-list { grid-template-columns: 1fr; }
-  #hud .hud-center { display: none; }
+  #hud { flex-wrap: wrap; }
+  #hud .hud-center { order: 3; flex-basis: 100%; justify-content: center; }
+  .progress-card { min-width: 0; width: 100%; max-width: 420px; }
+  #btn-autofire kbd, #btn-upgrade kbd { display: none; }
   .title { font-size: 38px; }
 }

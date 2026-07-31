@@ -19,11 +19,18 @@
         </div>
       </div>
       <div class="hud-center">
-        <div class="hud-pill" id="wave-pill"><span class="ico">⚔️</span><span id="wave-text">Wave 1</span></div>
-        <div class="hud-pill" id="mode-pill"><span id="mode-text">Endless</span></div>
+        <div class="progress-card">
+          <div class="progress-head">
+            <span id="wave-text">Wave 1</span>
+            <span id="mode-text" class="progress-mode">Endless</span>
+          </div>
+          <div class="progress-bar"><div id="progress-fill"></div></div>
+          <div id="progress-label" class="progress-label"></div>
+        </div>
       </div>
       <div class="hud-right">
         <div class="hud-pill gold" title="Gold"><span class="ico">🪙</span><span id="gold-text">0</span></div>
+        <button id="btn-autofire" class="btn btn-small btn-toggle" title="Toggle auto-fire">🔥 Auto <kbd>F</kbd></button>
         <button id="btn-upgrade" class="btn btn-small">⚙ Upgrades <kbd>U</kbd></button>
       </div>
     </div>
@@ -54,7 +61,7 @@
           <div class="best">Best: <span id="best-text">Wave 0</span></div>
           <label class="chk"><input type="checkbox" id="sound-toggle" checked /> Sound</label>
         </div>
-        <p class="hint">Hold <b>mouse / finger</b> to shoot toward the cursor · <b>U</b> to upgrade · <b>P</b> to pause</p>
+        <p class="hint">Hold <b>mouse / finger</b> to shoot toward the cursor · <b>F</b> auto-fire · <b>U</b> upgrade · <b>P</b> pause</p>
       </div>
     </div>
 
@@ -67,6 +74,7 @@
         </div>
         <div id="upgrade-list" class="upgrade-list"></div>
         <div class="upgrade-foot">
+          <label class="chk"><input type="checkbox" id="autofire-toggle" /> Auto-fire</label>
           <label class="chk"><input type="checkbox" id="sound-toggle-2" checked /> Sound</label>
           <button id="btn-quit" class="btn btn-ghost">Quit to menu</button>
           <button id="btn-resume" class="btn">Resume <kbd>U</kbd></button>
