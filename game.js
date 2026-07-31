@@ -6,22 +6,57 @@
   "use strict";
 
   // ---------- canvas setup ----------
+  // The game runs in a FIXED logical play field (W x H, virtual units) that is
+  // scaled to fit the window and letterboxed. Gameplay never depends on the
+  // real window size, so resizing only rescales the view — it can't break a run.
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
-  let W = 0, H = 0, DPR = 1;
+  let W = 0, H = 0, DPR = 1;                        // W,H = VIRTUAL field size
+  const FIELD = { H: 720, VW_MIN: 1024, VW_MAX: 1600 };
+  const view = { scale: 1, ox: 0, oy: 0, winW: 0, winH: 0 };
 
-  function resize() {
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // Pick a clamped logical size that fits the current window's aspect ratio.
+  function computeVirtualDims() {
+    const aspect = window.innerWidth / window.innerHeight;
+    const vw = clamp(Math.round(FIELD.H * aspect), FIELD.VW_MIN, FIELD.VW_MAX);
+    return { w: vw, h: FIELD.H };
+  }
+
+  // Establish (or re-fit) the logical field to the current window. Called on
+  // boot and whenever a fresh run/menu begins — NOT on every resize, so the
+  // field stays constant for the duration of a run.
+  function establishField() {
+    const d = computeVirtualDims();
+    W = d.w; H = d.h;
+    updateView();
+  }
+
+  // Recompute only the display scale/offset + backing store. Safe mid-run:
+  // it leaves W/H (and therefore all gameplay) untouched.
+  function updateView() {
     DPR = Math.min(window.devicePixelRatio || 1, 2);
-    W = window.innerWidth;
-    H = window.innerHeight;
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const winW = window.innerWidth, winH = window.innerHeight;
+    canvas.width = Math.floor(winW * DPR);
+    canvas.height = Math.floor(winH * DPR);
+    canvas.style.width = winW + "px";
+    canvas.style.height = winH + "px";
+    view.scale = Math.min(winW / W, winH / H);       // "contain" fit
+    view.ox = (winW - W * view.scale) / 2;
+    view.oy = (winH - H * view.scale) / 2;
+    view.winW = winW; view.winH = winH;
     layout();
   }
-  window.addEventListener("resize", resize);
+
+  // Set the canvas transform so drawing happens in virtual units, scaled and
+  // centered inside the window (letterbox offset baked in).
+  function applyView() {
+    ctx.setTransform(DPR * view.scale, 0, 0, DPR * view.scale,
+                     DPR * view.ox, DPR * view.oy);
+  }
+
+  window.addEventListener("resize", updateView);
 
   // ---------- world layout ----------
   const world = {
@@ -517,20 +552,29 @@
 
   // ---------- rendering ----------
   function render() {
-    ctx.clearRect(0, 0, W, H);
+    // fill the whole backing store (covers the letterbox bars) in device space
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = "#05070f";
+    ctx.fillRect(0, 0, view.winW, view.winH);
 
-    // camera shake
+    // switch to the scaled, centered virtual field
+    applyView();
+    ctx.save();
+    // clip so nothing spills into the letterbox bars
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.clip();
+
+    // camera shake (in virtual units)
     let sx = 0, sy = 0;
     if (state.shake > 0) {
       sx = (Math.random() - 0.5) * state.shake;
       sy = (Math.random() - 0.5) * state.shake;
     }
-    ctx.save();
     ctx.translate(sx, sy);
 
     drawBackground();
     drawWall();
-    // draw enemies (sorted by y for slight depth)
     enemies.forEach(drawEnemy);
     arrows.forEach(drawArrow);
     drawBallista();
@@ -948,6 +992,7 @@
 
   // ---------- game flow ----------
   function startGame(mode) {
+    establishField();          // re-fit the logical field to the current window
     state.mode = mode;
     state.running = true;
     state.paused = false;
@@ -1022,7 +1067,11 @@
   function pointerPos(e) {
     const rect = canvas.getBoundingClientRect();
     const p = e.touches ? e.touches[0] : e;
-    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+    // map from screen (CSS px) into virtual field coordinates, undoing the
+    // letterbox offset and scale, and clamp to the field so bar clicks behave
+    const x = clamp((p.clientX - rect.left - view.ox) / view.scale, 0, W);
+    const y = clamp((p.clientY - rect.top - view.oy) / view.scale, 0, H);
+    return { x, y };
   }
   function onDown(e) {
     if (!state.running || state.paused || state.over) return;
@@ -1083,7 +1132,7 @@
   bindSound("sound-toggle-2");
 
   // ---------- boot ----------
-  resize();
+  establishField();
   loadBest();
   requestAnimationFrame(frame);
 })();
