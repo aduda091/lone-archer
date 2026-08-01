@@ -94,6 +94,7 @@
     offense: "Offense",
     craft: "Arrowcraft",
     defense: "Defense",
+    tower: "Tower",
     econ: "Economy",
   };
 
@@ -189,6 +190,24 @@
       desc: "Wall slowly repairs itself over time.",
     },
     {
+      id: "turret", name: "Auto-Ballista", ico: "🏯", max: 8, cat: "tower",
+      base: 0, step: 1, baseCost: 220, costMul: 1.55,
+      fmt: (v) => v > 0 ? `${turretDmg(v)} dmg · ${turretRate(v).toFixed(1)}/s` : "none",
+      desc: "A wall-mounted crossbow that auto-fires at the frontmost ground foe. Independent of your archer.",
+    },
+    {
+      id: "flak", name: "Flak Battery", ico: "🎆", max: 8, cat: "tower",
+      base: 0, step: 1, baseCost: 190, costMul: 1.55,
+      fmt: (v) => v > 0 ? `${flakDmg(v)} dmg · ${flakRate(v).toFixed(1)}/s` : "none",
+      desc: "An anti-air gun that auto-fires at the nearest flyer — your hands-free answer to the skies.",
+    },
+    {
+      id: "moat", name: "Moat", ico: "🌊", max: 6, cat: "tower",
+      base: 0, step: 0.08, baseCost: 160, costMul: 1.5,
+      fmt: (v) => v > 0 ? `${Math.round(v * 100)}% slow · ${moatWidth()}px` : "none",
+      desc: "A flooded trench before the wall that bogs down the ground horde as it wades across.",
+    },
+    {
       id: "gold", name: "Bounty", ico: COIN_SVG, max: 20, cat: "econ",
       base: 1, step: 0.12, baseCost: 70, costMul: 1.5,
       fmt: (v) => `x${v.toFixed(2)}`,
@@ -216,6 +235,19 @@
   const LINGER_POISON_COEF = 0.45; // barbed-arrow poison dps as a fraction of arrow damage
   const MAX_CALTROPS = 70;      // cap stuck barbs to bound clutter/cost
   const DIGGER_SURFACINGS = 10; // times a digger breaks the surface between spawn and wall
+
+  // Tower auto-weapons + moat. turret/flak store their level as the upgrade value
+  // (base 0, step 1); damage and fire-rate derive from it here.
+  function lvlOf(id) { return state.levels[id] || 0; }
+  function turretRate(l) { return 0.5 + 0.4 * l; }   // shots/s
+  function turretDmg(l)  { return 12 + 9 * l; }
+  function flakRate(l)   { return 0.6 + 0.45 * l; }
+  function flakDmg(l)    { return 10 + 8 * l; }
+  function moatWidth()   { const l = lvlOf("moat"); return l > 0 ? 70 + 22 * l : 0; }
+  function towerPos() {
+    const topY = world.groundY - Math.min(220, H * 0.34);
+    return { turret: { x: world.wallX + 26, y: topY + 8 }, flak: { x: world.wallX + 62, y: topY - 6 } };
+  }
   const REFUND_RATE = 0.75;     // fraction of a level's cost returned when sold
   const FLAT_TIME = 0.85;       // seconds an arrow flies flat before gravity (reach = speed x this)
   const DIVE_DIST = 300;        // px before the wall where flyers start their swoop
@@ -266,6 +298,8 @@
     autoFire: false,     // fire continuously without holding
     aim: { x: 0, y: 0 },
     fireCooldown: 0,
+    turretCd: 0,         // auto-ballista cooldown
+    flakCd: 0,           // flak battery cooldown
     interestTimer: INTEREST_PERIOD,   // countdown to next interest payout
     dayPhase: 0,         // 0 = midnight at wave start, 1 = dawn as it clears
   };
@@ -278,6 +312,7 @@
   const floaters = [];   // floating damage / gold text
   const blasts = [];     // expanding explosion rings
   const caltrops = [];   // barbed arrows stuck in the ground (lingering traps)
+  const tracers = [];    // brief shot lines from tower auto-weapons
 
   function stat(id) { return upgValue(UPGRADES.find(u => u.id === id), state.levels[id] || 0); }
 
@@ -613,6 +648,37 @@
     sound.boom();
   }
 
+  // ---------- tower auto-weapons ----------
+  function updateTowers(dt) {
+    fireAuto(dt, "turret", (e) => !e.fly, "turret", turretRate, turretDmg, "#ffd27a", false);
+    fireAuto(dt, "flak",   (e) => !!e.fly, "flak",   flakRate,   flakDmg,   "#9fe8ff", true);
+    for (let i = tracers.length - 1; i >= 0; i--) {
+      tracers[i].life -= dt;
+      if (tracers[i].life <= 0) tracers.splice(i, 1);
+    }
+  }
+  function fireAuto(dt, id, filter, posKey, rateFn, dmgFn, color, isFlak) {
+    const l = lvlOf(id);
+    if (l <= 0) return;
+    const cd = id + "Cd";
+    state[cd] -= dt;
+    if (state[cd] > 0) return;
+    // target the frontmost valid, hittable foe (closest to the wall)
+    let best = null, bestX = -Infinity;
+    for (const e of enemies) {
+      if (e.dead || !filter(e)) continue;
+      if (e.burrow && !e.surfaced) continue;
+      if (e.x > bestX) { bestX = e.x; best = e; }
+    }
+    if (!best) { state[cd] = 0; return; }   // stay primed until something appears
+    state[cd] = 1 / rateFn(l);
+    const o = towerPos()[posKey];
+    damageEnemy(best, dmgFn(l), false, true);   // raw structure damage (no arrow status effects)
+    tracers.push({ x1: o.x, y1: o.y, x2: best.x, y2: best.y, life: 0.1, max: 0.1, color });
+    for (let k = 0; k < 5; k++) particles.push(spark(best.x, best.y, color, 1));
+    if (isFlak) sound.crack(); else sound.shoot();
+  }
+
   function killEnemy(e) {
     e.dead = true;
     state.kills++;
@@ -771,6 +837,8 @@
       }
     }
 
+    updateTowers(dt);
+
     // enemies
     for (let i = enemies.length - 1; i >= 0; i--) {
       const e = enemies[i];
@@ -798,6 +866,11 @@
       if (e.slowTimer > 0) {
         e.slowTimer -= dt;
         sp *= Math.max(0.1, 1 - e.slowFactor);
+      }
+      // moat: bogs down ground foes wading through the trench before the wall
+      const mw = moatWidth();
+      if (mw > 0 && !e.fly && e.x > world.wallX - mw) {
+        sp *= (1 - stat("moat"));
       }
       e.x += sp * dt;
 
@@ -896,10 +969,13 @@
 
     drawBackground();
     drawWall();
+    drawMoat();
     caltrops.forEach(drawCaltrop);
     enemies.forEach(drawEnemy);
     arrows.forEach(drawArrow);
+    tracers.forEach(drawTracer);
     drawBallista();
+    drawEmplacements();
     blasts.forEach(drawBlast);
     particles.forEach(drawParticle);
     floaters.forEach(drawFloater);
@@ -1355,6 +1431,56 @@
     }
   }
 
+  function drawMoat() {
+    const mw = moatWidth();
+    if (mw <= 0) return;
+    const gy = world.groundY, x0 = world.wallX - mw, h = 11;
+    ctx.save();
+    ctx.fillStyle = "#12222c";                       // trench
+    ctx.fillRect(x0, gy - 1, mw, h + 2);
+    ctx.fillStyle = "rgba(70,140,180,0.55)";         // water
+    ctx.fillRect(x0, gy, mw, h);
+    ctx.fillStyle = "rgba(175,222,247,0.4)";         // drifting shimmer
+    for (let i = 0; i < 4; i++) {
+      const off = (state.time * 26 + i * (mw / 4)) % mw;
+      ctx.fillRect(x0 + off, gy + 2 + (i % 2) * 4, 10, 1.5);
+    }
+    ctx.restore();
+  }
+
+  function drawTracer(t) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, t.life / t.max);
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(t.x1, t.y1); ctx.lineTo(t.x2, t.y2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawEmplacements() {
+    const p = towerPos();
+    if (lvlOf("turret") > 0) {
+      const { x, y } = p.turret;
+      ctx.save();
+      ctx.fillStyle = "#5a4327";
+      ctx.fillRect(x - 8, y - 4, 16, 12);
+      ctx.strokeStyle = "#caa66a"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 18, y - 2); ctx.stroke();
+      ctx.fillStyle = "#8a6a3c"; ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    if (lvlOf("flak") > 0) {
+      const { x, y } = p.flak;
+      ctx.save();
+      ctx.fillStyle = "#37506b";
+      ctx.fillRect(x - 7, y - 3, 14, 11);
+      ctx.strokeStyle = "#9fe8ff"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 11, y - 16); ctx.stroke();
+      ctx.fillStyle = "#5a7a9b"; ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawParticle(p) {
     ctx.globalAlpha = Math.max(0, p.life / (p.max || 0.8));
     ctx.fillStyle = p.color;
@@ -1668,13 +1794,15 @@
     state.wallHp = state.wallMax;
     state.aiming = false;
     state.fireCooldown = 0;
+    state.turretCd = 0;
+    state.flakCd = 0;
     state.interestTimer = INTEREST_PERIOD;
     state.waveTotal = 0;
     state.dayPhase = 0;
     // default aim points left toward the incoming horde until the cursor moves
     state.aim.x = world.ballista.x - 320;
     state.aim.y = world.ballista.y;
-    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0; blasts.length = 0; caltrops.length = 0;
+    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0; blasts.length = 0; caltrops.length = 0; tracers.length = 0;
 
     ui.el.menu.classList.add("hidden");
     ui.el.endModal.classList.add("hidden");

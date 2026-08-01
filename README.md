@@ -92,6 +92,11 @@ Arrowcraft: **Armor Piercing**, **Blunt Heads**, **Explosive Tips** (splash),
 **Toxic Coating** (damage over time), **Frost Arrows** (slow/stagger),
 **Barbed Arrows** (grounded arrows linger as poison barbs the horde walks into).
 Defense: Fortify Wall, Masons (regen).
+Tower: **Auto-Ballista** (auto-fires at the frontmost ground foe), **Flak
+Battery** (auto-fires at flyers — hands-free anti-air), **Moat** (a flooded
+trench that bogs the ground horde). The auto-weapons fire independently of your
+archer and deal raw damage, so armor still soaks them — they add up but don't
+replace the right tool.
 Economy: Bounty (kill multiplier), **Tribute** (gold/sec, scales with the wave),
 **Coin Vault** (interest on held gold, cap scales with the wave).
 
