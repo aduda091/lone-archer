@@ -171,6 +171,12 @@
       desc: "Hits chill foes, slowing them for 2s. Stronger hits stagger the horde.",
     },
     {
+      id: "linger", name: "Barbed Arrows", ico: "🪤", max: 8, cat: "craft",
+      base: 0, step: 0.7, baseCost: 85, costMul: 1.4,
+      fmt: (v) => v > 0 ? `${v.toFixed(1)}s stuck` : "none",
+      desc: "Arrows that hit the ground stick as barbs, poisoning the first ground foe to step on one — then they snap.",
+    },
+    {
       id: "wallHp", name: "Fortify Wall", ico: "🧱", max: 30, cat: "defense",
       base: 100, step: 40, baseCost: 35, costMul: 1.3,
       fmt: (v) => `${v} HP`,
@@ -207,6 +213,9 @@
   const INTEREST_PERIOD = 5;    // seconds between interest payouts
   const CHILL_DURATION = 2;     // seconds an enemy stays chilled after a hit
   const POISON_DURATION = 4;    // seconds a poison stack lasts (refreshed on re-hit)
+  const LINGER_POISON_COEF = 0.45; // barbed-arrow poison dps as a fraction of arrow damage
+  const MAX_CALTROPS = 70;      // cap stuck barbs to bound clutter/cost
+  const DIGGER_SURFACINGS = 10; // times a digger breaks the surface between spawn and wall
   const REFUND_RATE = 0.75;     // fraction of a level's cost returned when sold
   const FLAT_TIME = 0.85;       // seconds an arrow flies flat before gravity (reach = speed x this)
   const DIVE_DIST = 300;        // px before the wall where flyers start their swoop
@@ -268,6 +277,7 @@
   const particles = [];
   const floaters = [];   // floating damage / gold text
   const blasts = [];     // expanding explosion rings
+  const caltrops = [];   // barbed arrows stuck in the ground (lingering traps)
 
   function stat(id) { return upgValue(UPGRADES.find(u => u.id === id), state.levels[id] || 0); }
 
@@ -310,6 +320,8 @@
     runner: { r: 12, speed: 96,  hp: 18,  dmg: 6,  gold: 6,  color: "#4e7a8a", eye: "#9ff0ff", name: "Runner" },
     brute:  { r: 26, speed: 28,  hp: 120, dmg: 20, gold: 16, color: "#6b3b45", eye: "#ff9aa7", name: "Brute" },
     shaman: { r: 15, speed: 52,  hp: 55,  dmg: 10, gold: 12, color: "#5a4a86", eye: "#c9a6ff", name: "Shaman" },
+    // burrower — only vulnerable during its brief surfacings (see burrow logic)
+    digger: { r: 16, speed: 40,  hp: 70,  dmg: 15, gold: 22, color: "#6a4a2c", eye: "#ffd27f", name: "Digger", burrow: true },
     // siege line — most of their bulk is plating, not flesh
     sapper: { r: 18, speed: 46,  hp: 40,  armor: 60,  dmg: 12, gold: 16, color: "#6d6a5c", eye: "#ffe9a8", name: "Sapper" },
     ram:    { r: 30, speed: 20,  hp: 150, armor: 200, dmg: 44, gold: 42, color: "#575046", eye: "#ffc27a", name: "Siege Ram" },
@@ -343,6 +355,7 @@
     { type: "brute",  at: 4,  cost: 3.2, w: 1.6 },
     { type: "sapper", at: 5,  cost: 2.6, w: 1.8 },
     { type: "shaman", at: 6,  cost: 2.2, w: 1.4 },
+    { type: "digger", at: 7,  cost: 2.4, w: 1.5 },
     { type: "harpy",  at: 8,  cost: 3.0, w: 1.5 },
     { type: "ram",    at: 11, cost: 6.0, w: 1.2 },
     { type: "wyvern", at: 13, cost: 5.2, w: 1.3 },
@@ -422,6 +435,9 @@
       homeY,            // altitude it cruises at before the dive
       fly,
       phase: Math.random() * Math.PI * 2,   // desync the wing bob between flyers
+      burrow: base.burrow || false,         // digger: only hittable while surfaced
+      emerge: base.burrow ? 0 : 1,          // 0 fully underground, 1 fully out
+      surfaced: !base.burrow,
       r: base.r,
       speed: base.speed * (0.9 + Math.random() * 0.2),
       hp,
@@ -585,6 +601,7 @@
     for (let i = 0; i < enemies.length; i++) {
       const e = enemies[i];
       if (e.dead || e === source) continue;
+      if (e.burrow && !e.surfaced) continue;           // underground diggers are untouched by splash
       const d = Math.hypot(e.x - x, e.y - y) - e.r;
       if (d <= radius) {
         const falloff = 1 - Math.max(0, d) / radius * 0.6;
@@ -717,11 +734,18 @@
       a.life -= dt;
       // remove when it strikes the ground or leaves the field
       if (a.life <= 0 || a.x < -40 || a.x > W + 40 || a.y >= world.groundY - 1) {
-        if (a.y >= world.groundY - 6 && a.x > 0 && a.x < W) {
+        const landed = a.y >= world.groundY - 6 && a.x > 0 && a.x < W;
+        if (landed) {
           for (let k = 0; k < 3; k++) {
             const pp = spark(a.x, world.groundY - 2, "#b7a377");
             pp.vy = -Math.abs(pp.vy) * 0.4;
             particles.push(pp);
+          }
+          // Barbed Arrows: a grounded arrow becomes a lingering poison barb
+          const linger = stat("linger");
+          if (linger > 0) {
+            caltrops.push({ x: a.x, life: linger, max: linger, angle: a.angle, poison: a.dmg * LINGER_POISON_COEF });
+            if (caltrops.length > MAX_CALTROPS) caltrops.shift();
           }
         }
         arrows.splice(i, 1);
@@ -731,6 +755,7 @@
       for (let j = 0; j < enemies.length; j++) {
         const e = enemies[j];
         if (e.dead || a.hitIds.has(e)) continue;
+        if (e.burrow && !e.surfaced) continue;         // diggers are only hittable while surfaced
         const dx = e.x - a.x, dy = e.y - a.y;
         if (dx * dx + dy * dy <= (e.r + 4) * (e.r + 4)) {
           const isCrit = Math.random() < stat("crit");
@@ -782,6 +807,14 @@
         const target = e.homeY + (world.groundY - 110 - e.homeY) * dive;
         e.wob += dt * e.fly.freq * 7;                 // wing beat
         e.y = target + Math.sin(state.time * e.fly.freq * 2 + e.phase) * e.fly.amp * (1 - dive * 0.7);
+      } else if (e.burrow) {
+        // surface briefly ~DIGGER_SURFACINGS times along the run; only hittable while up
+        const span = world.wallX + 40;
+        const s = Math.sin(((e.x + 40) / span) * DIGGER_SURFACINGS * Math.PI * 2);
+        e.emerge = clamp((s - 0.6) / 0.4, 0, 1);      // buried most of the time, pops up briefly
+        e.surfaced = e.emerge > 0.35;
+        e.y = (world.groundY - e.r) + (1 - e.emerge) * (e.r + 30);  // sink below the ground line
+        e.wob += dt * (sp * 0.06);
       } else {
         e.wob += dt * (sp * 0.06);   // waddle slows with them
       }
@@ -791,6 +824,26 @@
         damageWall(e.dmg, e.y);
         e.dead = true;
         enemies.splice(i, 1);
+      }
+    }
+
+    // lingering barbs: tick down, and poison the first ground foe to step on one
+    for (let i = caltrops.length - 1; i >= 0; i--) {
+      const c = caltrops[i];
+      c.life -= dt;
+      if (c.life <= 0) { caltrops.splice(i, 1); continue; }
+      for (let j = 0; j < enemies.length; j++) {
+        const e = enemies[j];
+        if (e.dead || e.fly) continue;                 // flyers cruise above the barbs
+        if (e.burrow && !e.surfaced) continue;         // and buried diggers are out of reach
+        if (Math.abs(e.x - c.x) <= e.r + 5) {
+          e.poisonDps = Math.max(e.poisonDps, c.poison);
+          e.poisonTimer = POISON_DURATION;
+          e.hitFlash = Math.max(e.hitFlash, 0.08);
+          for (let k = 0; k < 4; k++) particles.push(spark(c.x, world.groundY - 4, "#8fdc5a", 0.8));
+          caltrops.splice(i, 1);
+          break;                                        // one hit, then the barb snaps
+        }
       }
     }
 
@@ -843,6 +896,7 @@
 
     drawBackground();
     drawWall();
+    caltrops.forEach(drawCaltrop);
     enemies.forEach(drawEnemy);
     arrows.forEach(drawArrow);
     drawBallista();
@@ -1090,6 +1144,7 @@
   }
 
   function drawEnemy(e) {
+    if (e.burrow) { drawDigger(e); return; }
     const bob = e.fly ? 0 : Math.sin(e.wob) * (e.r * 0.12);
     const x = e.x, y = e.y + bob;
     // ground shadow — flyers cast a faint, flattened one from altitude
@@ -1230,6 +1285,74 @@
     ctx.fillStyle = "#ff8a3c";
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r * (0.3 + t * 0.6), 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+  }
+
+  function drawCaltrop(c) {
+    const x = c.x, gy = world.groundY;
+    const a = Math.max(0, Math.min(1, c.life / c.max));
+    // faint poison glow pooling at the base
+    ctx.save();
+    ctx.globalAlpha = 0.16 * a;
+    ctx.fillStyle = "#8fdc5a";
+    ctx.beginPath(); ctx.arc(x, gy - 2, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // the barb itself, leaning in the dirt, fading as it nears breaking
+    ctx.save();
+    ctx.globalAlpha = 0.45 + 0.55 * a;
+    ctx.translate(x, gy);
+    ctx.rotate(-0.5);
+    ctx.strokeStyle = "#9ff06a";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -13); ctx.stroke();
+    ctx.fillStyle = "#c7ff9a";
+    ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(-3, -8); ctx.lineTo(3, -8); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawDigger(e) {
+    const x = e.x, gy = world.groundY;
+    // a dirt mound always marks its position — so it can be tracked underground and
+    // read as a threat, but only struck when it actually breaks the surface
+    const mr = e.r * (0.95 + (1 - e.emerge) * 0.45);
+    ctx.save();
+    ctx.fillStyle = "#4a3826";
+    ctx.beginPath();
+    ctx.moveTo(x - mr, gy + 1);
+    ctx.quadraticCurveTo(x, gy - mr * 0.75, x + mr, gy + 1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // body: only the emerged portion shows (clip to above the ground line)
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W, gy); ctx.clip();
+    ctx.fillStyle = e.hitFlash > 0 ? "#ffffff" : e.color;
+    ctx.beginPath(); ctx.arc(x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+    // digging claws
+    ctx.strokeStyle = e.hitFlash > 0 ? "#ffffff" : "#3a2716";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x - e.r * 0.7, e.y + e.r * 0.2); ctx.lineTo(x - e.r * 1.1, e.y - e.r * 0.1);
+    ctx.moveTo(x + e.r * 0.7, e.y + e.r * 0.2); ctx.lineTo(x + e.r * 1.1, e.y - e.r * 0.1);
+    ctx.stroke();
+    if (e.surfaced) {
+      ctx.fillStyle = e.eye;
+      ctx.beginPath(); ctx.arc(x - e.r * 0.3, e.y - e.r * 0.15, e.r * 0.17, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + e.r * 0.3, e.y - e.r * 0.15, e.r * 0.17, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    // vulnerability cue + hp bar only while it's up and hurt
+    if (e.surfaced) {
+      if (e.hp < e.maxHp) {
+        const bw = e.r * 2.1, bh = 4, bx = x - bw / 2, byy = e.y - e.r - 10;
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(bx - 1, byy - 1, bw + 2, bh + 2);
+        const f = Math.max(0, e.hp / e.maxHp);
+        ctx.fillStyle = f > 0.5 ? "#7be08a" : f > 0.25 ? "#ffcf5c" : "#ff5d6c";
+        ctx.fillRect(bx, byy, bw * f, bh);
+      }
+    }
   }
 
   function drawParticle(p) {
@@ -1551,7 +1674,7 @@
     // default aim points left toward the incoming horde until the cursor moves
     state.aim.x = world.ballista.x - 320;
     state.aim.y = world.ballista.y;
-    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0; blasts.length = 0;
+    arrows.length = 0; enemies.length = 0; particles.length = 0; floaters.length = 0; blasts.length = 0; caltrops.length = 0;
 
     ui.el.menu.classList.add("hidden");
     ui.el.endModal.classList.add("hidden");

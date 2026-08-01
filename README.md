@@ -44,12 +44,16 @@ The horde does not attack on one line, and it is not all made of flesh:
 | Grunt / Runner / Brute / Shaman | wave 1–6 | the ground line — cheap, fast, or bulky |
 | **Bat** | wave 3 | first flyer — cruises high, must actually be aimed at |
 | **Sapper** | wave 5 | first plating — teaches you that armor isn't just more HP |
+| **Digger** | wave 7 | burrows underground — only hittable in its brief surfacings |
 | **Harpy** | wave 8 | tougher flyer that dives at the battlements |
 | **Siege Ram** | wave 11 | slow, enormous armor, devastating if it lands |
 | **Wyvern** | wave 13 | armored *and* airborne |
 
 Flyers cruise at their own altitude and only swoop onto the wall at the last
-moment, so a single flat firing lane no longer clears the field.
+moment, so a single flat firing lane no longer clears the field. The **Digger**
+travels mostly underground — a dirt mound marks it so you can track it, but it
+surfaces only ~10 times on the way in, and can be hit only during those windows
+(poison, which keeps ticking while it's buried, is its natural counter).
 
 ### Bosses
 
@@ -85,7 +89,8 @@ above get past it.
 Offense: Arrow Power, Draw Speed, **Bolt Velocity** (speed *and* flat reach),
 Multi-Shot, **Focused Volley** (tightens the spread), Piercing, Critical Eye.
 Arrowcraft: **Armor Piercing**, **Blunt Heads**, **Explosive Tips** (splash),
-**Toxic Coating** (damage over time), **Frost Arrows** (slow/stagger).
+**Toxic Coating** (damage over time), **Frost Arrows** (slow/stagger),
+**Barbed Arrows** (grounded arrows linger as poison barbs the horde walks into).
 Defense: Fortify Wall, Masons (regen).
 Economy: Bounty (kill multiplier), **Tribute** (gold/sec, scales with the wave),
 **Coin Vault** (interest on held gold, cap scales with the wave).
