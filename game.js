@@ -191,14 +191,14 @@
     {
       id: "tribute", name: "Tribute", ico: "📜", max: 20, cat: "econ",
       base: 0, step: 0.6, baseCost: 55, costMul: 1.4,
-      fmt: (v) => `${v.toFixed(1)} ${COIN_SVG}/s`,
-      desc: "Villagers pay a steady tribute every second.",
+      fmt: (v) => v > 0 ? `${(v * econWaveMul()).toFixed(1)} ${COIN_SVG}/s (×${econWaveMul().toFixed(1)} wave)` : "none",
+      desc: "Villagers pay a steady tribute every second — the amount grows with the wave.",
     },
     {
       id: "interest", name: "Coin Vault", ico: "🏦", max: 12, cat: "econ",
       base: 0, step: 0.005, baseCost: 160, costMul: 1.6,
       fmt: (v) => v > 0 ? `${(v * 100).toFixed(1)}% / 5s · max ${vaultCap(v)}` : "none",
-      desc: "Interest on the gold you hold, every 5 seconds — but the vault only pays out up to its capacity.",
+      desc: "Interest on the gold you hold, every 5 seconds — the payout cap grows with the wave, so hoarding stays worthwhile late.",
     },
   ];
 
@@ -219,7 +219,14 @@
   // compound into infinite gold — it is a strong stipend, not a money printer.
   const INTEREST_STEP = 0.005;
   const VAULT_CAP_PER_LEVEL = 26;
-  function vaultCap(rate) { return Math.round((rate / INTEREST_STEP) * VAULT_CAP_PER_LEVEL); }
+  // Passive income (Tribute + the Coin Vault's payout cap) scales with the wave.
+  // Enemy HP grows geometrically but kill-gold does not, so without this the
+  // economy hits a hard ceiling and every run dies around the same wave. Scaling
+  // the INVESTMENT-based income lets a committed econ build keep pace and push
+  // for endless records, while combat-only builds still hit a (later) wall.
+  const ECON_WAVE_POW = 0.8;
+  function econWaveMul() { return Math.pow(waveScale(Math.max(1, state.wave)), ECON_WAVE_POW); }
+  function vaultCap(rate) { return Math.round((rate / INTEREST_STEP) * VAULT_CAP_PER_LEVEL * econWaveMul()); }
   function blastRadius(v) { return 44 + v * 95; }
 
   function upgValue(u, lvl) { return u.base + u.step * lvl; }
@@ -291,6 +298,7 @@
     wave() { this.blip(440, 0.12, "sine", 0.06); setTimeout(() => this.blip(660, 0.14, "sine", 0.06), 110); },
     buy() { this.blip(700, 0.08, "sine", 0.06); setTimeout(() => this.blip(950, 0.09, "sine", 0.06), 70); },
     sell() { this.blip(520, 0.08, "sine", 0.05); setTimeout(() => this.blip(360, 0.09, "sine", 0.05), 60); },
+    alarm() { this.blip(180, 0.28, "sawtooth", 0.09); setTimeout(() => this.blip(130, 0.34, "sawtooth", 0.09), 180); },
   };
 
   // ---------- enemy archetypes ----------
@@ -435,6 +443,13 @@
       poisonDps: 0,     // health damage per second while poisoned
       poisonTick: 0,    // accumulator so poison floaters don't spam
     });
+    // telegraph the boss the moment it steps onto the field (it spawns last,
+    // long after the wave banner) so it can never sneak in among the horde
+    if (isBoss) {
+      banner(`⚠ ${base.name} ⚠`, fly ? "airborne boss incoming!" : "boss incoming!");
+      sound.alarm();
+      state.shake = Math.min(state.shake + 10, 16);
+    }
   }
 
   // ---------- wave control ----------
@@ -640,8 +655,9 @@
       ui.setWall();
     }
 
-    // passive income — steady tribute + periodic interest on held gold
-    const tribute = stat("tribute");
+    // passive income — steady tribute + periodic interest on held gold.
+    // Both scale with the wave (via econWaveMul / vaultCap) so they stay relevant.
+    const tribute = stat("tribute") * econWaveMul();
     if (tribute > 0) {
       const g = tribute * dt;           // fractional; accumulates silently
       state.gold += g;
@@ -836,6 +852,55 @@
     drawAimGuide();
 
     ctx.restore();
+
+    drawBossBar();   // screen-space overlay, never clipped or hidden by particles
+  }
+
+  function drawBossBar() {
+    if (!state.running || state.over) return;
+    let boss = null;
+    for (const e of enemies) { if (e.boss && !e.dead) { boss = e; break; } }
+    if (!boss) return;
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const bw = Math.min(440, view.winW * 0.6);
+    const bx = (view.winW - bw) / 2, by = 72, bh = 15;
+
+    // name
+    ctx.textAlign = "center";
+    ctx.font = "bold 15px Segoe UI";
+    ctx.fillStyle = "#ffd7a0";
+    ctx.fillText("⚠  " + boss.name + "  ⚠", view.winW / 2, by - 6);
+
+    // track background
+    ctx.fillStyle = "rgba(8,10,20,0.85)";
+    ctx.strokeStyle = "rgba(255,120,120,0.5)";
+    ctx.lineWidth = 1.5;
+    roundRect(bx - 2, by - 2, bw + 4, bh + 4, 6);
+    ctx.fill(); ctx.stroke();
+
+    // health fill
+    const hf = Math.max(0, boss.hp / boss.maxHp);
+    ctx.fillStyle = "#e0384c";
+    ctx.fillRect(bx, by, bw * hf, bh);
+    // armor overlay (steel) sits in front of the remaining health
+    if (boss.armorMax > 0 && boss.armor > 0) {
+      const af = boss.armor / boss.armorMax;
+      ctx.fillStyle = "rgba(190,205,225,0.9)";
+      ctx.fillRect(bx, by, bw * af, bh);
+    }
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, bw, bh);
+  }
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
 
   // ---- day/night helpers ----

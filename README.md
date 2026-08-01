@@ -87,8 +87,8 @@ Multi-Shot, **Focused Volley** (tightens the spread), Piercing, Critical Eye.
 Arrowcraft: **Armor Piercing**, **Blunt Heads**, **Explosive Tips** (splash),
 **Toxic Coating** (damage over time), **Frost Arrows** (slow/stagger).
 Defense: Fortify Wall, Masons (regen).
-Economy: Bounty (kill multiplier), **Tribute** (gold/sec), **Coin Vault**
-(capped interest on held gold).
+Economy: Bounty (kill multiplier), **Tribute** (gold/sec, scales with the wave),
+**Coin Vault** (interest on held gold, cap scales with the wave).
 
 Levels can be sold back for a 75% refund, so builds aren't locked in.
 
@@ -100,8 +100,15 @@ shows the predicted trajectory and landing spot.
 - Enemy HP and armor scale **geometrically** with the wave, while their damage
   and especially the gold they drop scale far slower. Stacking Arrow Power alone
   stalls out fast; you have to bring the right tool for what's walking at you.
-- The **Coin Vault** pays interest on held gold but caps each payout at its
-  capacity, so it's a strong stipend rather than a compounding money printer.
+- Kill-gold can't keep up with geometric HP on its own, so **investment-based
+  passive income (Tribute and the Coin Vault's payout cap) scales with the
+  wave**. A committed economy build can therefore keep pace and chase endless
+  records; a combat-only build still eventually walls out, just later.
+- The **Coin Vault** still caps each payout at its (now wave-scaling) capacity,
+  so it's a strong, hoard-rewarding stipend rather than an infinite money printer.
+- Bosses spawn last in their wave but announce themselves the instant they step
+  onto the field (alarm + banner) and carry a health bar pinned to the top of
+  the screen, so they can't sneak in among the horde.
 
 ## Files
 
